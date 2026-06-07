@@ -25,6 +25,31 @@ struct ChatMessage
     std::string text;
 };
 
+struct AiActionLogEntry
+{
+    std::string method;
+    bool applied = false;
+    std::string diagnostics;
+};
+
+struct AiExchange
+{
+    std::string userPrompt;
+    std::string assistantReply;
+    std::string rawResponse;
+    std::string extractedJson;
+    std::string diagnostics;
+    std::string rejectedReason;
+    std::string finishReason;
+    bool usedGrammar = false;
+    int promptTokens = 0;
+    int outputTokens = 0;
+    double elapsedMs = 0.0;
+    int appliedCount = 0;
+    int rejectedCount = 0;
+    std::vector<AiActionLogEntry> actions;
+};
+
 class ChatLookDevApp
 {
 public:
@@ -54,6 +79,7 @@ private:
     void DrawMaterialPanel();
     void DrawLightingPanel();
     void DrawAiChatPanel();
+    void DrawActionHistoryPanel();
     void DrawDiagnosticsPanel();
     void RenderFrame(float deltaSeconds);
     void HandleViewportInput(const ImVec2& imageMin, const ImVec2& imageMax);
@@ -82,8 +108,8 @@ private:
     std::vector<LocalLlmMessage> BuildLlmMessages(const std::string& userText) const;
     std::string BuildSystemPrompt() const;
     std::string BuildControlStateJson() const;
-    void HandleLlmResponse(const std::string& text);
-    bool ApplyAiAction(const std::string& method, const struct JsonValue& params, std::string& diagnostics);
+    void HandleLlmResponse(const LocalLlmEvent& event);
+    bool ApplyAiAction(const std::string& method, const struct JsonValue& params, std::string& diagnostics, bool commit);
 
     HINSTANCE m_instance = nullptr;
     HWND m_hwnd = nullptr;
@@ -105,6 +131,9 @@ private:
     std::string m_projectDiagnostics;
 
     std::vector<ChatMessage> m_chatMessages;
+    std::vector<AiExchange> m_aiHistory;
+    std::string m_pendingUserPrompt;
+    std::string m_lastLlmStats;
     std::array<char, 4096> m_chatInput = {};
     bool m_scrollChatToBottom = false;
 

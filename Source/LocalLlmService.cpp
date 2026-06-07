@@ -41,6 +41,24 @@ void FillBatch(llama_batch& batch, const std::vector<int>& tokens, int startPos,
         batch.logits[i] = logitsLast && i == batch.n_tokens - 1;
     }
 }
+
+const char* LookDevJsonGrammar()
+{
+    return R"gbnf(
+root ::= ws "{" ws reply-field ws "," ws actions-field ws "}" ws
+reply-field ::= "\"reply\"" ws ":" ws string
+actions-field ::= "\"actions\"" ws ":" ws "[" ws (action (ws "," ws action)*)? ws "]"
+action ::= "{" ws "\"method\"" ws ":" ws method ws "," ws "\"params\"" ws ":" ws object ws "}"
+method ::= "\"set_view_settings\"" | "\"set_environment_settings\"" | "\"set_sun_settings\"" | "\"set_material_preview\"" | "\"set_camera\"" | "\"set_model_transform\""
+object ::= "{" ws (pair (ws "," ws pair)*)? ws "}"
+pair ::= string ws ":" ws value
+array ::= "[" ws (value (ws "," ws value)*)? ws "]"
+value ::= object | array | string | number | "true" | "false" | "null"
+string ::= "\"" ([^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]))* "\""
+number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
+ws ::= [ \t\n\r]*
+)gbnf";
+}
 }
 
 namespace cld
@@ -83,6 +101,19 @@ void LocalLlmService::Stop()
     SetState(LocalLlmState::Stopped, "Stopped");
 }
 
+void LocalLlmService::CancelGeneration()
+{
+    m_stopRequested = true;
+    JoinWorker();
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_model && m_context)
+    {
+        m_state = LocalLlmState::Ready;
+        m_stateText = "Ready";
+        m_lastError.clear();
+    }
+}
+
 void LocalLlmService::JoinWorker()
 {
     if (m_worker.joinable())
@@ -108,6 +139,8 @@ void LocalLlmService::ReleaseModel()
         llama_model_free(m_model);
         m_model = nullptr;
     }
+    m_structuredGrammarActive = false;
+    m_samplerDiagnostics.clear();
 }
 
 void LocalLlmService::LoadWorker(LocalLlmConfig config)
@@ -141,12 +174,15 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
             llama_set_n_threads(context, config.threads, config.threads);
         }
 
-        llama_sampler_chain_params samplerParams = llama_sampler_chain_default_params();
-        llama_sampler* sampler = llama_sampler_chain_init(samplerParams);
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(std::max(1, config.topK)));
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(std::clamp(config.topP, 0.05f, 1.0f), 1));
-        llama_sampler_chain_add(sampler, llama_sampler_init_temp(std::clamp(config.temperature, 0.0f, 2.0f)));
-        llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+        std::string samplerDiagnostics;
+        bool usedGrammar = false;
+        llama_sampler* sampler = CreateSamplerChain(model, config, samplerDiagnostics, usedGrammar);
+        if (!sampler)
+        {
+            llama_free(context);
+            llama_model_free(model);
+            throw std::runtime_error("llama sampler initialization failed.");
+        }
 
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -155,10 +191,16 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
             m_context = context;
             m_sampler = sampler;
             m_config = config;
+            m_structuredGrammarActive = usedGrammar;
+            m_samplerDiagnostics = samplerDiagnostics;
             m_lastError.clear();
         }
         SetState(LocalLlmState::Ready, "Ready");
         PushEvent(LocalLlmEvent::Kind::Status, "Local model ready.");
+        if (!samplerDiagnostics.empty())
+        {
+            PushEvent(LocalLlmEvent::Kind::Status, samplerDiagnostics);
+        }
     }
     catch (const std::exception& ex)
     {
@@ -190,12 +232,15 @@ void LocalLlmService::GenerateWorker(std::vector<LocalLlmMessage> messages)
     {
         SetState(LocalLlmState::Generating, "Generating");
         PushEvent(LocalLlmEvent::Kind::Status, "Generating response...");
-        const std::string response = Generate(messages);
-        if (!m_stopRequested)
+        const GenerationResult response = Generate(messages);
+        if (response.finishReason == "stopped")
         {
-            PushEvent(LocalLlmEvent::Kind::Response, response);
+            PushEvent(LocalLlmEvent::Kind::Status, "Generation stopped.");
             SetState(LocalLlmState::Ready, "Ready");
+            return;
         }
+        PushResponseEvent(response);
+        SetState(LocalLlmState::Ready, "Ready");
     }
     catch (const std::exception& ex)
     {
@@ -276,28 +321,71 @@ std::string LocalLlmService::TokenToPiece(int token) const
     return std::string(buffer, buffer + size);
 }
 
-std::string LocalLlmService::Generate(const std::vector<LocalLlmMessage>& messages)
+llama_sampler* LocalLlmService::CreateSamplerChain(llama_model* model, const LocalLlmConfig& config, std::string& diagnostics, bool& usedGrammar) const
+{
+    usedGrammar = false;
+    llama_sampler_chain_params samplerParams = llama_sampler_chain_default_params();
+    llama_sampler* sampler = llama_sampler_chain_init(samplerParams);
+    if (!sampler)
+    {
+        diagnostics = "llama_sampler_chain_init failed.";
+        return nullptr;
+    }
+
+    if (config.structuredJson)
+    {
+        const llama_vocab* vocab = llama_model_get_vocab(model);
+        llama_sampler* grammar = llama_sampler_init_grammar(vocab, LookDevJsonGrammar(), "root");
+        if (grammar)
+        {
+            llama_sampler_chain_add(sampler, grammar);
+            usedGrammar = true;
+            diagnostics = "Structured JSON grammar enabled.";
+        }
+        else
+        {
+            diagnostics = "Structured JSON grammar failed to initialize; falling back to unconstrained generation.";
+        }
+    }
+
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(std::max(1, config.topK)));
+    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(std::clamp(config.topP, 0.05f, 1.0f), 1));
+    llama_sampler_chain_add(sampler, llama_sampler_init_temp(std::clamp(config.temperature, 0.0f, 2.0f)));
+    llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
+    return sampler;
+}
+
+LocalLlmService::GenerationResult LocalLlmService::Generate(const std::vector<LocalLlmMessage>& messages)
 {
     llama_model* model = nullptr;
     llama_context* context = nullptr;
     llama_sampler* sampler = nullptr;
     LocalLlmConfig config;
+    bool grammarActive = false;
+    std::string samplerDiagnostics;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         model = m_model;
         context = m_context;
         sampler = m_sampler;
         config = m_config;
+        grammarActive = m_structuredGrammarActive;
+        samplerDiagnostics = m_samplerDiagnostics;
     }
     if (!model || !context || !sampler)
     {
         throw std::runtime_error("Model is not loaded.");
     }
 
+    const auto generationStart = std::chrono::steady_clock::now();
+    GenerationResult result;
     llama_memory_clear(llama_get_memory(context), true);
     llama_sampler_reset(sampler);
     const std::string prompt = ApplyChatTemplate(messages);
     std::vector<int> promptTokens = Tokenize(prompt, true, true);
+    result.promptTokens = static_cast<int>(promptTokens.size());
+    result.usedGrammar = grammarActive;
+    result.diagnostics = samplerDiagnostics;
     if (promptTokens.empty())
     {
         throw std::runtime_error("Prompt tokenization produced no tokens.");
@@ -317,8 +405,8 @@ std::string LocalLlmService::Generate(const std::vector<LocalLlmMessage>& messag
     }
     llama_batch_free(batch);
 
-    std::string output;
     int position = static_cast<int>(promptTokens.size());
+    result.finishReason = "max_tokens";
     for (int i = 0; i < std::max(1, config.maxTokens) && !m_stopRequested; ++i)
     {
         const int token = llama_sampler_sample(sampler, context, -1);
@@ -326,9 +414,11 @@ std::string LocalLlmService::Generate(const std::vector<LocalLlmMessage>& messag
         const llama_vocab* vocab = llama_model_get_vocab(model);
         if (llama_vocab_is_eog(vocab, token))
         {
+            result.finishReason = "eog";
             break;
         }
-        output += TokenToPiece(token);
+        result.text += TokenToPiece(token);
+        ++result.outputTokens;
         std::vector<int> nextToken = { token };
         llama_batch nextBatch = llama_batch_init(1, 0, 1);
         FillBatch(nextBatch, nextToken, position, true);
@@ -337,10 +427,17 @@ std::string LocalLlmService::Generate(const std::vector<LocalLlmMessage>& messag
         llama_batch_free(nextBatch);
         if (decodeResult != 0)
         {
+            result.finishReason = "decode_failed";
             break;
         }
     }
-    return output;
+    if (m_stopRequested)
+    {
+        result.finishReason = "stopped";
+    }
+    const auto generationEnd = std::chrono::steady_clock::now();
+    result.elapsedMs = std::chrono::duration<double, std::milli>(generationEnd - generationStart).count();
+    return result;
 }
 
 std::vector<LocalLlmEvent> LocalLlmService::DrainEvents()
@@ -368,6 +465,22 @@ void LocalLlmService::PushEvent(LocalLlmEvent::Kind kind, const std::string& tex
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_events.push_back({ kind, text });
+}
+
+void LocalLlmService::PushResponseEvent(const GenerationResult& result)
+{
+    LocalLlmEvent event;
+    event.kind = LocalLlmEvent::Kind::Response;
+    event.text = result.text;
+    event.rawText = result.text;
+    event.promptTokens = result.promptTokens;
+    event.outputTokens = result.outputTokens;
+    event.elapsedMs = result.elapsedMs;
+    event.finishReason = result.finishReason;
+    event.usedGrammar = result.usedGrammar;
+    event.diagnostics = result.diagnostics;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_events.push_back(std::move(event));
 }
 
 void LocalLlmService::SetState(LocalLlmState state, const std::string& text)

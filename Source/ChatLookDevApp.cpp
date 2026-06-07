@@ -478,6 +478,16 @@ void AddScaled(std::array<float, 3>& value, const std::array<float, 3>& directio
     value[1] += direction[1] * scale;
     value[2] += direction[2] * scale;
 }
+
+bool IsSupportedAiAction(const std::string& method)
+{
+    return method == "set_view_settings"
+        || method == "set_environment_settings"
+        || method == "set_sun_settings"
+        || method == "set_material_preview"
+        || method == "set_camera"
+        || method == "set_model_transform";
+}
 }
 
 namespace cld
@@ -591,6 +601,7 @@ void ChatLookDevApp::InitializeDefaults()
     m_llmConfig.temperature = 0.2f;
     m_llmConfig.topP = 0.9f;
     m_llmConfig.topK = 40;
+    m_llmConfig.structuredJson = true;
 }
 
 void ChatLookDevApp::MainLoop()
@@ -1117,6 +1128,11 @@ void ChatLookDevApp::DrawAiChatPanel()
     ImGui::SameLine();
     if (ImGui::Button("Stop"))
     {
+        m_llm.CancelGeneration();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Unload Model"))
+    {
         m_llm.Stop();
     }
     if (!PathExists(m_llmConfig.modelPath))
@@ -1126,10 +1142,15 @@ void ChatLookDevApp::DrawAiChatPanel()
 
     ImGui::SliderInt("Context Tokens", &m_llmConfig.contextTokens, 1024, 32768);
     ImGui::SliderInt("Max Reply Tokens", &m_llmConfig.maxTokens, 64, 2048);
-    ImGui::SliderInt("CPU Threads", &m_llmConfig.threads, 0, 64);
+    ImGui::SliderInt("CPU Threads", &m_llmConfig.threads, 1, 64);
     ImGui::SliderInt("GPU Layers", &m_llmConfig.gpuLayers, 0, 128);
+    ImGui::Checkbox("Structured JSON", &m_llmConfig.structuredJson);
     ImGui::SliderFloat("Temperature", &m_llmConfig.temperature, 0.0f, 1.5f);
     ImGui::SliderFloat("Top P", &m_llmConfig.topP, 0.05f, 1.0f);
+    if (!m_lastLlmStats.empty())
+    {
+        ImGui::TextWrapped("%s", m_lastLlmStats.c_str());
+    }
 
     ImGui::Separator();
     const float transcriptHeight = std::max(140.0f, ImGui::GetContentRegionAvail().y - 150.0f);
@@ -1159,11 +1180,98 @@ void ChatLookDevApp::DrawAiChatPanel()
         SendChatPrompt();
     }
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Clear"))
+    {
+        m_chatMessages.clear();
+        m_aiHistory.clear();
+        m_pendingUserPrompt.clear();
+        m_lastActionDiagnostics.clear();
+        m_lastLlmStats.clear();
+        std::fill(m_chatInput.begin(), m_chatInput.end(), '\0');
+        m_scrollChatToBottom = false;
+    }
     if (!m_lastActionDiagnostics.empty())
     {
         ImGui::TextWrapped("%s", m_lastActionDiagnostics.c_str());
     }
+    DrawActionHistoryPanel();
     ImGui::End();
+}
+
+void ChatLookDevApp::DrawActionHistoryPanel()
+{
+    if (!ImGui::CollapsingHeader("Action History", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+    if (m_aiHistory.empty())
+    {
+        ImGui::TextUnformatted("No AI exchanges yet.");
+        return;
+    }
+
+    for (std::size_t offset = 0; offset < m_aiHistory.size(); ++offset)
+    {
+        const std::size_t index = m_aiHistory.size() - 1 - offset;
+        const AiExchange& exchange = m_aiHistory[index];
+        ImGui::PushID(static_cast<int>(index));
+        std::ostringstream label;
+        label << "#" << (index + 1) << " "
+              << (exchange.rejectedReason.empty() ? "Applied" : "Rejected")
+              << " (" << exchange.appliedCount << " actions, "
+              << exchange.outputTokens << " tokens, "
+              << std::fixed << std::setprecision(1) << exchange.elapsedMs << " ms)";
+        if (ImGui::TreeNode(label.str().c_str()))
+        {
+            ImGui::TextWrapped("User: %s", exchange.userPrompt.c_str());
+            if (!exchange.assistantReply.empty())
+            {
+                ImGui::TextWrapped("Reply: %s", exchange.assistantReply.c_str());
+            }
+            if (!exchange.rejectedReason.empty())
+            {
+                ImGui::TextWrapped("Rejected: %s", exchange.rejectedReason.c_str());
+            }
+            if (!exchange.diagnostics.empty())
+            {
+                ImGui::TextWrapped("Diagnostics: %s", exchange.diagnostics.c_str());
+            }
+            ImGui::Text("Prompt Tokens: %d  Output Tokens: %d  Finish: %s  Grammar: %s",
+                exchange.promptTokens,
+                exchange.outputTokens,
+                exchange.finishReason.c_str(),
+                exchange.usedGrammar ? "on" : "off");
+            for (const AiActionLogEntry& action : exchange.actions)
+            {
+                ImGui::BulletText("%s: %s%s",
+                    action.method.empty() ? "(unknown)" : action.method.c_str(),
+                    action.applied ? "applied" : "rejected",
+                    action.diagnostics.empty() ? "" : (" - " + action.diagnostics).c_str());
+            }
+            if (ImGui::SmallButton("Copy JSON"))
+            {
+                ImGui::SetClipboardText(exchange.extractedJson.c_str());
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Copy Raw"))
+            {
+                ImGui::SetClipboardText(exchange.rawResponse.c_str());
+            }
+            if (!exchange.extractedJson.empty() && ImGui::TreeNode("Extracted JSON"))
+            {
+                ImGui::TextWrapped("%s", exchange.extractedJson.c_str());
+                ImGui::TreePop();
+            }
+            if (!exchange.rawResponse.empty() && ImGui::TreeNode("Raw Response"))
+            {
+                ImGui::TextWrapped("%s", exchange.rawResponse.c_str());
+                ImGui::TreePop();
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
 }
 
 void ChatLookDevApp::DrawDiagnosticsPanel()
@@ -1447,7 +1555,8 @@ bool ChatLookDevApp::SaveProjectToDisk(const std::filesystem::path& requestedPat
              << "\"threads\": " << m_llmConfig.threads << ", "
              << "\"temperature\": " << m_llmConfig.temperature << ", "
              << "\"topP\": " << m_llmConfig.topP << ", "
-             << "\"topK\": " << m_llmConfig.topK << " },\n";
+             << "\"topK\": " << m_llmConfig.topK << ", "
+             << "\"structuredJson\": " << (m_llmConfig.structuredJson ? "true" : "false") << " },\n";
         json << "  \"materials\": [\n";
         for (std::size_t i = 0; i < m_project.materialAssignments.size(); ++i)
         {
@@ -1580,9 +1689,11 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
             loadedLlm.maxTokens = static_cast<int>(JsonNumberOr(*llm, "maxTokens", loadedLlm.maxTokens));
             loadedLlm.gpuLayers = static_cast<int>(JsonNumberOr(*llm, "gpuLayers", loadedLlm.gpuLayers));
             loadedLlm.threads = static_cast<int>(JsonNumberOr(*llm, "threads", loadedLlm.threads));
+            loadedLlm.threads = std::max(1, loadedLlm.threads);
             loadedLlm.temperature = static_cast<float>(JsonNumberOr(*llm, "temperature", loadedLlm.temperature));
             loadedLlm.topP = static_cast<float>(JsonNumberOr(*llm, "topP", loadedLlm.topP));
             loadedLlm.topK = static_cast<int>(JsonNumberOr(*llm, "topK", loadedLlm.topK));
+            loadedLlm.structuredJson = JsonBoolOr(*llm, "structuredJson", loadedLlm.structuredJson);
         }
 
         if (const JsonValue* materials = FindMember(root, "materials"); materials && materials->type == JsonValue::Type::Array)
@@ -1697,6 +1808,7 @@ void ChatLookDevApp::SendChatPrompt()
     if (m_llm.Submit(messages))
     {
         m_chatMessages.push_back({ "user", prompt });
+        m_pendingUserPrompt = prompt;
         std::fill(m_chatInput.begin(), m_chatInput.end(), '\0');
         m_scrollChatToBottom = true;
     }
@@ -1725,12 +1837,18 @@ std::string ChatLookDevApp::BuildSystemPrompt() const
     prompt << "Reply in the user's language inside the JSON reply field.\n";
     prompt << "Return only strict JSON, no markdown, no prose outside JSON.\n";
     prompt << "Schema: {\"reply\":\"short user-facing reply\",\"actions\":[{\"method\":\"set_view_settings|set_environment_settings|set_sun_settings|set_material_preview|set_camera|set_model_transform\",\"params\":{}}]}.\n";
+    prompt << "Always include an actions array. Use [] when no parameter change is needed.\n";
     prompt << "Allowed model transform params: translation float3 absolute, translationDelta float3 additive, rotationDegrees float3 absolute XYZ degrees, rotationDegreesDelta float3 additive XYZ degrees, rotationRadians float3 absolute, rotationRadiansDelta float3 additive, reset boolean.\n";
     prompt << "Allowed view params: exposure, gamma, toneMapper(None/Reinhard/ACES), displayMode(Beauty/Base Color/Normal/Roughness/Metallic/Ambient Occlusion/Emissive/Lighting Only), turntableEnabled, turntableSpeed.\n";
     prompt << "Allowed environment params: rotationYaw, intensity, backgroundMode(Sky Color/HDRI/Checker), skyTopColor, skyHorizonColor.\n";
     prompt << "Allowed sun params: sunDirection float3, sunColor float3, illuminanceLux.\n";
     prompt << "Allowed material params: materialName optional, baseColorFactor float4, emissiveFactor float4, roughnessFactor, metallicFactor, normalStrength, occlusionStrength, alphaMode(Opaque/Mask/Blend), alphaCutoff, packedOcclusionRoughnessMetallic, flipNormalGreen.\n";
     prompt << "Allowed camera params: target float3, yaw, pitch, distance.\n";
+    prompt << "Examples:\n";
+    prompt << "User: 露出を下げて -> {\"reply\":\"露出を下げました。\",\"actions\":[{\"method\":\"set_view_settings\",\"params\":{\"exposure\":-1.0}}]}\n";
+    prompt << "User: 太陽を強くして -> {\"reply\":\"太陽光を強くしました。\",\"actions\":[{\"method\":\"set_sun_settings\",\"params\":{\"illuminanceLux\":50000}}]}\n";
+    prompt << "User: モデルを右へ動かして -> {\"reply\":\"モデルを右へ少し移動しました。\",\"actions\":[{\"method\":\"set_model_transform\",\"params\":{\"translationDelta\":[0.25,0,0]}}]}\n";
+    prompt << "User: この material を粗くして -> {\"reply\":\"選択中のマテリアルを粗くしました。\",\"actions\":[{\"method\":\"set_material_preview\",\"params\":{\"roughnessFactor\":0.85}}]}\n";
     prompt << "Do not request shader edits, MCP, automation, runtime compilation, DXR, path tracing, or external tools.\n";
     prompt << "Current state JSON: " << BuildControlStateJson();
     return prompt.str();
@@ -1768,25 +1886,59 @@ void ChatLookDevApp::DrainLlmEvents()
     {
         if (event.kind == LocalLlmEvent::Kind::Response)
         {
-            HandleLlmResponse(event.text);
+            HandleLlmResponse(event);
         }
         else if (event.kind == LocalLlmEvent::Kind::Error)
         {
             m_chatMessages.push_back({ "system", event.text });
+            if (!m_pendingUserPrompt.empty())
+            {
+                AiExchange exchange;
+                exchange.userPrompt = m_pendingUserPrompt;
+                exchange.rejectedReason = event.text;
+                exchange.diagnostics = "LLM generation error.";
+                m_aiHistory.push_back(std::move(exchange));
+                m_pendingUserPrompt.clear();
+            }
             m_scrollChatToBottom = true;
         }
         else
         {
             m_lastActionDiagnostics = event.text;
+            if (event.text == "Generation stopped." && !m_pendingUserPrompt.empty())
+            {
+                AiExchange exchange;
+                exchange.userPrompt = m_pendingUserPrompt;
+                exchange.rejectedReason = "Generation stopped.";
+                exchange.diagnostics = "Generation was cancelled before a response was applied.";
+                m_aiHistory.push_back(std::move(exchange));
+                m_pendingUserPrompt.clear();
+                m_scrollChatToBottom = true;
+            }
         }
     }
 }
 
-void ChatLookDevApp::HandleLlmResponse(const std::string& text)
+void ChatLookDevApp::HandleLlmResponse(const LocalLlmEvent& event)
 {
+    AiExchange exchange;
+    exchange.userPrompt = m_pendingUserPrompt;
+    exchange.rawResponse = event.rawText.empty() ? event.text : event.rawText;
+    exchange.promptTokens = event.promptTokens;
+    exchange.outputTokens = event.outputTokens;
+    exchange.elapsedMs = event.elapsedMs;
+    exchange.finishReason = event.finishReason;
+    exchange.usedGrammar = event.usedGrammar;
+    exchange.diagnostics = event.diagnostics;
+    m_lastLlmStats = "Last generation: prompt " + std::to_string(event.promptTokens)
+        + " tokens, output " + std::to_string(event.outputTokens)
+        + " tokens, " + event.finishReason
+        + ", " + std::to_string(static_cast<int>(event.elapsedMs)) + " ms"
+        + (event.usedGrammar ? ", grammar on." : ", grammar off.");
+
     try
     {
-        const std::string trimmed = TrimAscii(text);
+        const std::string trimmed = TrimAscii(exchange.rawResponse);
         std::string jsonText;
         if (!ExtractFirstJsonObject(trimmed, jsonText))
         {
@@ -1794,6 +1946,7 @@ void ChatLookDevApp::HandleLlmResponse(const std::string& text)
         }
 
         const bool recoveredFromWrappedOutput = jsonText.size() != trimmed.size();
+        exchange.extractedJson = jsonText;
         const JsonValue root = JsonParser(jsonText).Parse();
         if (root.type != JsonValue::Type::Object)
         {
@@ -1804,9 +1957,15 @@ void ChatLookDevApp::HandleLlmResponse(const std::string& text)
         {
             throw std::runtime_error("AI response must contain string field 'reply'.");
         }
+        exchange.assistantReply = replyValue->string;
 
         std::ostringstream actionDiagnostics;
-        int appliedCount = 0;
+        struct PendingAction
+        {
+            std::string method;
+            const JsonValue* params = nullptr;
+        };
+        std::vector<PendingAction> pendingActions;
         if (const JsonValue* actions = FindMember(root, "actions"))
         {
             if (actions->type != JsonValue::Type::Array)
@@ -1817,52 +1976,85 @@ void ChatLookDevApp::HandleLlmResponse(const std::string& text)
             {
                 if (action.type != JsonValue::Type::Object)
                 {
-                    actionDiagnostics << "Rejected non-object action. ";
-                    continue;
+                    exchange.actions.push_back({ {}, false, "Rejected non-object action." });
+                    throw std::runtime_error("Rejected non-object action.");
                 }
                 const std::string method = JsonStringOr(action, "method");
+                if (!IsSupportedAiAction(method))
+                {
+                    const std::string diagnostics = "Unsupported action method: " + method + ".";
+                    exchange.actions.push_back({ method, false, diagnostics });
+                    throw std::runtime_error(diagnostics);
+                }
                 const JsonValue* params = FindMember(action, "params");
-                JsonValue emptyParams;
-                emptyParams.type = JsonValue::Type::Object;
                 if (!params)
                 {
-                    params = &emptyParams;
+                    const std::string diagnostics = "Rejected action with missing params.";
+                    exchange.actions.push_back({ method, false, diagnostics });
+                    throw std::runtime_error(diagnostics);
                 }
                 if (params->type != JsonValue::Type::Object)
                 {
-                    actionDiagnostics << "Rejected action with non-object params. ";
-                    continue;
+                    const std::string diagnostics = "Rejected action with non-object params.";
+                    exchange.actions.push_back({ method, false, diagnostics });
+                    throw std::runtime_error(diagnostics);
                 }
                 std::string diagnostics;
-                if (ApplyAiAction(method, *params, diagnostics))
+                if (!ApplyAiAction(method, *params, diagnostics, false))
                 {
-                    ++appliedCount;
+                    exchange.actions.push_back({ method, false, diagnostics });
+                    throw std::runtime_error(diagnostics);
                 }
-                else
-                {
-                    actionDiagnostics << diagnostics << " ";
-                }
+                pendingActions.push_back({ method, params });
+            }
+        }
+
+        for (const PendingAction& action : pendingActions)
+        {
+            std::string diagnostics;
+            if (ApplyAiAction(action.method, *action.params, diagnostics, true))
+            {
+                ++exchange.appliedCount;
+                exchange.actions.push_back({ action.method, true, diagnostics.empty() ? "Applied." : diagnostics });
+            }
+            else
+            {
+                ++exchange.rejectedCount;
+                exchange.actions.push_back({ action.method, false, diagnostics });
+                actionDiagnostics << diagnostics << " ";
             }
         }
 
         m_chatMessages.push_back({ "assistant", replyValue->string });
-        actionDiagnostics << "Applied actions: " << appliedCount << ".";
+        actionDiagnostics << "Applied actions: " << exchange.appliedCount << ".";
         if (recoveredFromWrappedOutput)
         {
             actionDiagnostics << " Ignored non-JSON text around the response.";
         }
+        if (!event.diagnostics.empty())
+        {
+            actionDiagnostics << " " << event.diagnostics;
+        }
         m_lastActionDiagnostics = actionDiagnostics.str();
+        exchange.diagnostics = m_lastActionDiagnostics;
+        m_aiHistory.push_back(exchange);
+        m_pendingUserPrompt.clear();
         m_scrollChatToBottom = true;
     }
     catch (const std::exception& ex)
     {
         m_chatMessages.push_back({ "system", "Rejected invalid AI JSON: " + std::string(ex.what()) });
+        exchange.rejectedReason = ex.what();
+        exchange.rejectedCount = static_cast<int>(std::max<std::size_t>(exchange.actions.size(), 1));
         m_lastActionDiagnostics = "Rejected invalid AI JSON.";
+        exchange.diagnostics = m_lastActionDiagnostics;
+        m_aiHistory.push_back(exchange);
+        m_pendingUserPrompt.clear();
         m_scrollChatToBottom = true;
     }
 }
 
-bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& params, std::string& diagnostics)
+bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& params, std::string& diagnostics, bool commit)
 {
     if (method == "set_model_transform")
     {
@@ -1920,9 +2112,12 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
             }
         }
 
-        m_project.modelTransform = transform;
-        ApplyModelTransform();
-        MarkProjectDirty();
+        if (commit)
+        {
+            m_project.modelTransform = transform;
+            ApplyModelTransform();
+            MarkProjectDirty();
+        }
         return true;
     }
 
@@ -1951,9 +2146,12 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
             }
             view.displayMode = DisplayModeFromString(displayMode->string, view.displayMode);
         }
-        m_project.lookDevViewSettings = view;
-        ApplyLookDevSettings();
-        MarkProjectDirty();
+        if (commit)
+        {
+            m_project.lookDevViewSettings = view;
+            ApplyLookDevSettings();
+            MarkProjectDirty();
+        }
         return true;
     }
 
@@ -1975,11 +2173,14 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
             }
             environment.backgroundMode = BackgroundModeFromString(backgroundMode->string, environment.backgroundMode);
         }
-        m_project.lookDevEnvironment = environment;
-        m_project.skyTopColor = skyTop;
-        m_project.skyHorizonColor = skyHorizon;
-        ApplyLookDevSettings();
-        MarkProjectDirty();
+        if (commit)
+        {
+            m_project.lookDevEnvironment = environment;
+            m_project.skyTopColor = skyTop;
+            m_project.skyHorizonColor = skyHorizon;
+            ApplyLookDevSettings();
+            MarkProjectDirty();
+        }
         return true;
     }
 
@@ -1992,9 +2193,12 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
         if (!ReadOptionalNumber(params, "illuminanceLux", 0.0f, 200000.0f, illuminanceLux, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "sunIntensity", 0.0f, 200000.0f, illuminanceLux, diagnostics)) return false;
         environment.sunIntensity = illuminanceLux;
-        m_project.lookDevEnvironment = environment;
-        ApplyLookDevSettings();
-        MarkProjectDirty();
+        if (commit)
+        {
+            m_project.lookDevEnvironment = environment;
+            ApplyLookDevSettings();
+            MarkProjectDirty();
+        }
         return true;
     }
 
@@ -2005,20 +2209,28 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
         if (!ReadOptionalNumber(params, "yaw", -1000.0f, 1000.0f, camera.yaw, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "pitch", -1.55f, 1.55f, camera.pitch, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "distance", 0.001f, 10000000.0f, camera.distance, diagnostics)) return false;
-        m_backend.SetCameraState(camera);
-        m_project.viewportCamera = camera;
-        m_project.hasViewportCamera = true;
-        MarkProjectDirty();
+        if (commit)
+        {
+            m_backend.SetCameraState(camera);
+            m_project.viewportCamera = camera;
+            m_project.hasViewportCamera = true;
+            MarkProjectDirty();
+        }
         return true;
     }
 
     if (method == "set_material_preview")
     {
-        EnsureMaterialSelection();
-        std::string materialName = JsonStringOr(params, "materialName");
-        if (materialName.empty() && !m_project.materialAssignments.empty())
+        if (m_project.materialAssignments.empty())
         {
-            materialName = m_project.materialAssignments[m_selectedMaterial].materialName;
+            diagnostics = "No material is available.";
+            return false;
+        }
+        std::string materialName = JsonStringOr(params, "materialName");
+        const std::size_t selectedMaterial = std::min(m_selectedMaterial, m_project.materialAssignments.size() - 1);
+        if (materialName.empty())
+        {
+            materialName = m_project.materialAssignments[selectedMaterial].materialName;
         }
         auto materialIt = std::find_if(m_project.materialAssignments.begin(), m_project.materialAssignments.end(), [&](const rb::MaterialAssignment& material) {
             return material.materialName == materialName;
@@ -2047,10 +2259,13 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
             }
             material.alphaMode = AlphaModeFromString(alphaMode->string, material.alphaMode);
         }
-        *materialIt = material;
-        m_selectedMaterial = static_cast<std::size_t>(std::distance(m_project.materialAssignments.begin(), materialIt));
-        ApplyMaterialAssignments();
-        MarkProjectDirty();
+        if (commit)
+        {
+            *materialIt = material;
+            m_selectedMaterial = static_cast<std::size_t>(std::distance(m_project.materialAssignments.begin(), materialIt));
+            ApplyMaterialAssignments();
+            MarkProjectDirty();
+        }
         return true;
     }
 
