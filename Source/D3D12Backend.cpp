@@ -26,6 +26,9 @@ using namespace DirectX;
 
 namespace
 {
+// Keep the shader-visible SRV heap layout in sync with
+// ChatLookDevShaderABI.hlsli. Material textures are packed per material, then
+// the shared environment/IBL/shadow descriptors follow as one contiguous table.
 constexpr UINT SceneSrvDescriptorIndex = 0;
 constexpr UINT MaterialTextureSlotCount = static_cast<UINT>(rb::TextureSlot::Count);
 constexpr UINT MaterialSrvDescriptorStart = 1;
@@ -34,7 +37,8 @@ constexpr UINT EnvironmentSrvDescriptorIndex = MaterialSrvDescriptorStart + MaxM
 constexpr UINT IrradianceSrvDescriptorIndex = EnvironmentSrvDescriptorIndex + 1;
 constexpr UINT PrefilterSrvDescriptorIndex = IrradianceSrvDescriptorIndex + 1;
 constexpr UINT BrdfLutSrvDescriptorIndex = PrefilterSrvDescriptorIndex + 1;
-constexpr UINT IblUavDescriptorIndex = BrdfLutSrvDescriptorIndex + 1;
+constexpr UINT ShadowSrvDescriptorIndex = BrdfLutSrvDescriptorIndex + 1;
+constexpr UINT IblUavDescriptorIndex = ShadowSrvDescriptorIndex + 1;
 constexpr UINT ImGuiSrvDescriptorStart = IblUavDescriptorIndex + 16;
 constexpr UINT SrvDescriptorCapacity = ImGuiSrvDescriptorStart + 512;
 constexpr UINT TextureSlotBaseColor = static_cast<UINT>(rb::TextureSlot::BaseColor);
@@ -53,6 +57,23 @@ constexpr UINT IblWidth = 256;
 constexpr UINT IblHeight = 128;
 constexpr UINT IblMipLevels = 6;
 constexpr UINT BrdfLutSize = 128;
+constexpr DXGI_FORMAT ShadowMapFormat = DXGI_FORMAT_R32_TYPELESS;
+constexpr DXGI_FORMAT ShadowDsvFormat = DXGI_FORMAT_D32_FLOAT;
+constexpr DXGI_FORMAT ShadowSrvFormat = DXGI_FORMAT_R32_FLOAT;
+
+UINT NormalizeShadowResolution(std::uint32_t resolution)
+{
+    // Fixed buckets keep the UI, project JSON, and GPU resource lifetime simple.
+    if (resolution <= 1024)
+    {
+        return 1024;
+    }
+    if (resolution <= 2048)
+    {
+        return 2048;
+    }
+    return 4096;
+}
 
 D3D12_HEAP_PROPERTIES HeapProperties(D3D12_HEAP_TYPE type)
 {
@@ -236,6 +257,7 @@ void D3D12Backend::Initialize(HWND hwnd, UINT width, UINT height, const std::fil
     CreateSceneTarget();
     CreateDefaultMaterialResources();
     CreateIblResources();
+    CreateShadowResources();
     InitializeImGui(hwnd);
 }
 
@@ -263,6 +285,7 @@ void D3D12Backend::Shutdown()
     ReleaseRenderTargets();
     m_sceneTarget.Reset();
     m_sceneDepth.Reset();
+    m_shadowMap.Reset();
     m_fallbackTexture.Reset();
     m_environmentTexture.Reset();
     m_irradianceTexture.Reset();
@@ -273,6 +296,7 @@ void D3D12Backend::Shutdown()
     m_draws.clear();
     m_pbrPipelineState.Reset();
     m_skyPipelineState.Reset();
+    m_shadowPipelineState.Reset();
     m_iblPipelineState.Reset();
     m_graphicsRootSignature.Reset();
     m_computeRootSignature.Reset();
@@ -365,7 +389,7 @@ void D3D12Backend::CreateDeviceObjects(HWND hwnd, UINT width, UINT height)
     m_rtvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
-    dsvHeapDesc.NumDescriptors = 1;
+    dsvHeapDesc.NumDescriptors = 2;
     dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
     ThrowIfFailed(m_device->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&m_dsvHeap)), "CreateDescriptorHeap(DSV) failed.");
     m_dsvDescriptorSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
@@ -498,8 +522,68 @@ void D3D12Backend::CreateSceneTarget()
     m_device->CreateDepthStencilView(m_sceneDepth.Get(), nullptr, DsvHandle(0));
 }
 
+void D3D12Backend::CreateShadowResources()
+{
+    if (!m_device)
+    {
+        return;
+    }
+
+    m_shadowResolution = NormalizeShadowResolution(m_lookDevShadowSettings.resolution);
+
+    // A typeless depth texture lets the same resource be written through a DSV
+    // and sampled as R32_FLOAT during the PBR pass.
+    D3D12_RESOURCE_DESC desc = {};
+    desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width = m_shadowResolution;
+    desc.Height = m_shadowResolution;
+    desc.DepthOrArraySize = 1;
+    desc.MipLevels = 1;
+    desc.Format = ShadowMapFormat;
+    desc.SampleDesc.Count = 1;
+    desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE clearValue = {};
+    clearValue.Format = ShadowDsvFormat;
+    clearValue.DepthStencil.Depth = 1.0f;
+    clearValue.DepthStencil.Stencil = 0;
+
+    const D3D12_HEAP_PROPERTIES heapProps = HeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+    m_shadowMap.Reset();
+    ThrowIfFailed(m_device->CreateCommittedResource(
+        &heapProps,
+        D3D12_HEAP_FLAG_NONE,
+        &desc,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        &clearValue,
+        IID_PPV_ARGS(&m_shadowMap)),
+        "Create shadow map failed.");
+    m_shadowMapState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+    dsvDesc.Format = ShadowDsvFormat;
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    m_device->CreateDepthStencilView(m_shadowMap.Get(), &dsvDesc, DsvHandle(1));
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Format = ShadowSrvFormat;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    m_device->CreateShaderResourceView(m_shadowMap.Get(), &srvDesc, SrvCpuHandle(ShadowSrvDescriptorIndex));
+
+    std::ostringstream status;
+    status << "Sun shadow " << (m_lookDevShadowSettings.enabled ? "enabled" : "disabled")
+           << ": " << m_shadowResolution << ".";
+    m_shadowStatus = status.str();
+}
+
 void D3D12Backend::CreateRootSignatures()
 {
+    // Graphics root parameters:
+    // b0 scene matrices, t0-t5 material textures, b1 material constants,
+    // b2 LookDev constants, and t6-t10 environment/IBL/shadow textures.
     D3D12_DESCRIPTOR_RANGE materialRange = {};
     materialRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
     materialRange.NumDescriptors = 6;
@@ -509,7 +593,7 @@ void D3D12Backend::CreateRootSignatures()
 
     D3D12_DESCRIPTOR_RANGE iblRange = {};
     iblRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    iblRange.NumDescriptors = 4;
+    iblRange.NumDescriptors = 5;
     iblRange.BaseShaderRegister = 6;
     iblRange.RegisterSpace = 0;
     iblRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -535,7 +619,7 @@ void D3D12Backend::CreateRootSignatures()
     graphicsParams[4].DescriptorTable.pDescriptorRanges = &iblRange;
     graphicsParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-    D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+    D3D12_STATIC_SAMPLER_DESC samplers[3] = {};
     samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -548,6 +632,18 @@ void D3D12Backend::CreateRootSignatures()
     samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     samplers[1].ShaderRegister = 1;
     samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    samplers[2].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    samplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+    samplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+    samplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+    samplers[2].MipLODBias = 0.0f;
+    samplers[2].MaxAnisotropy = 1;
+    samplers[2].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    samplers[2].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    samplers[2].MinLOD = 0.0f;
+    samplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+    samplers[2].ShaderRegister = 2;
+    samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_ROOT_SIGNATURE_DESC graphicsDesc = {};
     graphicsDesc.NumParameters = _countof(graphicsParams);
@@ -615,6 +711,8 @@ void D3D12Backend::CreatePipelineStates()
     const std::filesystem::path shaderDir = m_rootDirectory / "Bin" / "Shaders";
     const auto pbrVs = ReadBinaryFile(shaderDir / "LookDevPBR.VSMain.vs_6_9.cso");
     const auto pbrPs = ReadBinaryFile(shaderDir / "LookDevPBR.PSMain.ps_6_9.cso");
+    const auto shadowVs = ReadBinaryFile(shaderDir / "ShadowDepth.VSMain.vs_6_9.cso");
+    const auto shadowPs = ReadBinaryFile(shaderDir / "ShadowDepth.PSMain.ps_6_9.cso");
     const auto skyVs = ReadBinaryFile(shaderDir / "Sky.VSMain.vs_6_9.cso");
     const auto skyPs = ReadBinaryFile(shaderDir / "Sky.PSMain.ps_6_9.cso");
     const auto iblCs = ReadBinaryFile(shaderDir / "IblPrecompute.CSMain.cs_6_9.cso");
@@ -647,6 +745,21 @@ void D3D12Backend::CreatePipelineStates()
     psoDesc.DSVFormat = m_sceneDepthFormat;
     psoDesc.SampleDesc.Count = 1;
     ThrowIfFailed(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pbrPipelineState)), "Create PBR pipeline state failed.");
+
+    // The shadow pass reuses the scene vertex layout and material constants so
+    // alpha-mask cutout can match the color pass without a second material path.
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowDesc = psoDesc;
+    shadowDesc.VS = { shadowVs.data(), shadowVs.size() };
+    shadowDesc.PS = { shadowPs.data(), shadowPs.size() };
+    shadowDesc.RasterizerState.DepthBias = 1000;
+    shadowDesc.RasterizerState.SlopeScaledDepthBias = 2.0f;
+    shadowDesc.NumRenderTargets = 0;
+    for (DXGI_FORMAT& format : shadowDesc.RTVFormats)
+    {
+        format = DXGI_FORMAT_UNKNOWN;
+    }
+    shadowDesc.DSVFormat = ShadowDsvFormat;
+    ThrowIfFailed(m_device->CreateGraphicsPipelineState(&shadowDesc, IID_PPV_ARGS(&m_shadowPipelineState)), "Create shadow pipeline state failed.");
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC skyDesc = psoDesc;
     skyDesc.InputLayout = {};
@@ -1108,6 +1221,11 @@ bool D3D12Backend::UpdateEnvironmentTexture(const std::wstring& path, std::strin
 {
     if (path.empty())
     {
+        // The previous HDRI may still be referenced by an in-flight frame and
+        // by the environment SRV descriptor. Swap the descriptor back to a
+        // stable fallback before releasing the resource.
+        WaitForGpu();
+        CreateFallbackSrv(EnvironmentSrvDescriptorIndex);
         m_environmentTexture.Reset();
         m_environmentMipLevels = 1;
         m_lookDevEnvironment.environmentPath.clear();
@@ -1252,6 +1370,36 @@ void D3D12Backend::SetLookDevViewSettings(const rb::LookDevViewSettings& setting
     m_lookDevConstants.viewOptions.w = static_cast<float>(settings.displayMode);
 }
 
+void D3D12Backend::SetLookDevShadowSettings(const rb::LookDevShadowSettings& shadowSettings)
+{
+    const UINT previousResolution = m_shadowResolution;
+    m_lookDevShadowSettings = shadowSettings;
+    m_lookDevShadowSettings.resolution = NormalizeShadowResolution(shadowSettings.resolution);
+    m_lookDevShadowSettings.strength = std::clamp(m_lookDevShadowSettings.strength, 0.0f, 1.0f);
+    m_lookDevShadowSettings.bias = std::clamp(m_lookDevShadowSettings.bias, 0.0f, 0.05f);
+    m_lookDevShadowSettings.softness = std::clamp(m_lookDevShadowSettings.softness, 0.0f, 8.0f);
+    m_lookDevShadowSettings.fitScale = std::clamp(m_lookDevShadowSettings.fitScale, 1.0f, 4.0f);
+    // gShadowOptions = enabled, strength, depth bias, PCF texel step.
+    m_lookDevConstants.shadowOptions = XMFLOAT4(
+        m_lookDevShadowSettings.enabled ? 1.0f : 0.0f,
+        m_lookDevShadowSettings.strength,
+        m_lookDevShadowSettings.bias,
+        m_lookDevShadowSettings.softness / static_cast<float>(m_lookDevShadowSettings.resolution));
+
+    if (m_device && (!m_shadowMap || previousResolution != m_lookDevShadowSettings.resolution))
+    {
+        WaitForGpu();
+        CreateShadowResources();
+    }
+    else
+    {
+        std::ostringstream status;
+        status << "Sun shadow " << (m_lookDevShadowSettings.enabled ? "enabled" : "disabled")
+               << ": " << m_lookDevShadowSettings.resolution << ".";
+        m_shadowStatus = status.str();
+    }
+}
+
 void D3D12Backend::SetDebugViewMode(rb::LookDevDisplayMode displayMode)
 {
     m_lookDevViewSettings.displayMode = displayMode;
@@ -1311,7 +1459,8 @@ void D3D12Backend::UpdateConstants(float deltaSeconds)
     const XMVECTOR offset = XMVectorSet(std::sin(m_cameraYaw) * cp * distance, std::sin(m_cameraPitch) * distance, std::cos(m_cameraYaw) * cp * distance, 0.0f);
     const XMVECTOR eye = target + offset;
     const XMMATRIX view = XMMatrixLookAtLH(eye, target, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-    const XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(45.0f), aspect, 0.01f, 100000.0f);
+    const float fovDegrees = std::clamp(m_cameraFovDegrees, 5.0f, 120.0f);
+    const XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(fovDegrees), aspect, 0.01f, 100000.0f);
     const XMMATRIX model = ModelMatrix();
     const XMMATRIX viewProjection = view * projection;
     XMStoreFloat4x4(&m_sceneConstants.modelViewProjection, XMMatrixTranspose(model * viewProjection));
@@ -1325,8 +1474,43 @@ void D3D12Backend::UpdateConstants(float deltaSeconds)
         m_lookDevEnvironment.sunDirection[1],
         m_lookDevEnvironment.sunDirection[2],
         1.0f);
-    XMStoreFloat4x4(&m_sceneConstants.shadowViewProjection, XMMatrixIdentity());
+    XMStoreFloat4x4(&m_sceneConstants.shadowViewProjection, XMMatrixTranspose(ComputeShadowViewProjection()));
     std::memcpy(m_constantBufferMapped, &m_sceneConstants, sizeof(m_sceneConstants));
+}
+
+XMMATRIX D3D12Backend::ComputeShadowViewProjection() const
+{
+    // This is a single whole-scene Sun map, not CSM. Fitting against the
+    // transformed scene bounds keeps model translate/rotate controls in shadow.
+    XMFLOAT3 boundsMin;
+    XMFLOAT3 boundsMax;
+    TransformedSceneBounds(boundsMin, boundsMax);
+    const XMVECTOR minBounds = XMLoadFloat3(&boundsMin);
+    const XMVECTOR maxBounds = XMLoadFloat3(&boundsMax);
+    const XMVECTOR center = (minBounds + maxBounds) * 0.5f;
+    const float radius = std::max(0.5f, SceneRadius() * m_lookDevShadowSettings.fitScale);
+
+    XMVECTOR lightDirection = XMVectorSet(
+        m_lookDevEnvironment.sunDirection[0],
+        m_lookDevEnvironment.sunDirection[1],
+        m_lookDevEnvironment.sunDirection[2],
+        0.0f);
+    if (XMVectorGetX(XMVector3LengthSq(lightDirection)) < 1.0e-6f)
+    {
+        lightDirection = XMVectorSet(-0.35f, -0.75f, 0.55f, 0.0f);
+    }
+    lightDirection = XMVector3Normalize(lightDirection);
+
+    XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+    if (std::abs(XMVectorGetX(XMVector3Dot(lightDirection, up))) > 0.95f)
+    {
+        up = XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    const XMVECTOR eye = center - lightDirection * (radius * 2.0f);
+    const XMMATRIX view = XMMatrixLookAtLH(eye, center, up);
+    const XMMATRIX projection = XMMatrixOrthographicLH(radius * 2.0f, radius * 2.0f, 0.01f, radius * 4.0f);
+    return view * projection;
 }
 
 void D3D12Backend::DrawSky()
@@ -1340,6 +1524,61 @@ void D3D12Backend::DrawSky()
     m_commandList->IASetVertexBuffers(0, 0, nullptr);
     m_commandList->IASetIndexBuffer(nullptr);
     m_commandList->DrawInstanced(3, 1, 0, 0);
+}
+
+void D3D12Backend::RenderShadowMap()
+{
+    if (!m_lookDevShadowSettings.enabled || !m_shadowPipelineState || !m_shadowMap || !m_vertexBuffer || !m_indexBuffer || m_draws.empty())
+    {
+        return;
+    }
+
+    if (m_shadowMapState != D3D12_RESOURCE_STATE_DEPTH_WRITE)
+    {
+        D3D12_RESOURCE_BARRIER barrier = Transition(m_shadowMap.Get(), m_shadowMapState, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        m_commandList->ResourceBarrier(1, &barrier);
+        m_shadowMapState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE shadowDsv = DsvHandle(1);
+    m_commandList->OMSetRenderTargets(0, nullptr, FALSE, &shadowDsv);
+    m_commandList->ClearDepthStencilView(shadowDsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    D3D12_VIEWPORT shadowViewport = { 0.0f, 0.0f, static_cast<float>(m_shadowResolution), static_cast<float>(m_shadowResolution), 0.0f, 1.0f };
+    D3D12_RECT shadowScissor = { 0, 0, static_cast<LONG>(m_shadowResolution), static_cast<LONG>(m_shadowResolution) };
+    m_commandList->RSSetViewports(1, &shadowViewport);
+    m_commandList->RSSetScissorRects(1, &shadowScissor);
+
+    m_commandList->SetGraphicsRootSignature(m_graphicsRootSignature.Get());
+    m_commandList->SetPipelineState(m_shadowPipelineState.Get());
+    m_commandList->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());
+    m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+    m_commandList->IASetIndexBuffer(&m_indexBufferView);
+
+    // Blend materials do not cast in v1.2. Mask materials are drawn and can
+    // discard in ShadowDepth.ps so cutout silhouettes remain consistent.
+    for (const rb::SceneDraw& draw : m_draws)
+    {
+        if (draw.indexCount == 0)
+        {
+            continue;
+        }
+
+        const RenderMaterial& material = m_materials[std::min<std::size_t>(draw.materialIndex, m_materials.size() - 1)];
+        if (material.constants.alphaMode > 1.5f)
+        {
+            continue;
+        }
+
+        m_commandList->SetGraphicsRootDescriptorTable(1, material.textureTableGpu);
+        m_commandList->SetGraphicsRoot32BitConstants(2, sizeof(MaterialConstants) / sizeof(std::uint32_t), &material.constants, 0);
+        m_commandList->DrawIndexedInstanced(draw.indexCount, 1, draw.startIndex, draw.baseVertex, 0);
+    }
+
+    D3D12_RESOURCE_BARRIER barrier = Transition(m_shadowMap.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    m_commandList->ResourceBarrier(1, &barrier);
+    m_shadowMapState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 }
 
 void D3D12Backend::DrawScene()
@@ -1390,6 +1629,8 @@ void D3D12Backend::Render(float deltaSeconds)
 
     ID3D12DescriptorHeap* heaps[] = { m_srvHeap.Get() };
     m_commandList->SetDescriptorHeaps(1, heaps);
+
+    RenderShadowMap();
 
     if (m_sceneTargetState != D3D12_RESOURCE_STATE_RENDER_TARGET)
     {
@@ -1610,6 +1851,7 @@ rb::ViewportCamera D3D12Backend::CameraState() const
     camera.yaw = m_cameraYaw;
     camera.pitch = m_cameraPitch;
     camera.distance = m_cameraDistance;
+    camera.fovDegrees = m_cameraFovDegrees;
     return camera;
 }
 
@@ -1619,6 +1861,7 @@ void D3D12Backend::SetCameraState(const rb::ViewportCamera& camera)
     m_cameraYaw = camera.yaw;
     m_cameraPitch = std::clamp(camera.pitch, -1.55f, 1.55f);
     m_cameraDistance = std::max(camera.distance, 0.01f);
+    m_cameraFovDegrees = std::clamp(camera.fovDegrees, 5.0f, 120.0f);
 }
 
 void D3D12Backend::OrbitCamera(float yawDeltaRadians, float pitchDeltaRadians)
@@ -1677,6 +1920,8 @@ RendererStats D3D12Backend::Stats() const
     stats.vertexCount = m_vertexCount;
     stats.indexCount = m_indexCount;
     stats.environmentStatus = m_environmentStatus;
+    stats.shadowStatus = m_shadowStatus;
+    stats.shadowResolution = m_shadowResolution;
     return stats;
 }
 }

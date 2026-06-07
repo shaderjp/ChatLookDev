@@ -40,6 +40,8 @@ struct RendererStats
     std::uint32_t vertexCount = 0;
     std::uint32_t indexCount = 0;
     std::string environmentStatus;
+    std::string shadowStatus;
+    std::uint32_t shadowResolution = 0;
 };
 
 class D3D12Backend
@@ -68,6 +70,7 @@ public:
     void SetSkyColors(const std::array<float, 4>& topColor, const std::array<float, 4>& horizonColor);
     void SetLookDevEnvironment(const rb::LookDevEnvironment& environment);
     void SetLookDevViewSettings(const rb::LookDevViewSettings& settings);
+    void SetLookDevShadowSettings(const rb::LookDevShadowSettings& shadowSettings);
     void SetDebugViewMode(rb::LookDevDisplayMode displayMode);
     void SetModelTransform(const rb::ModelTransform& transform);
     bool ResetImGuiLayout();
@@ -88,6 +91,8 @@ public:
     RendererStats Stats() const;
 
 private:
+    // These constant-buffer structs mirror ChatLookDevShaderABI.hlsli. Keep
+    // field order and 16-byte packing aligned when changing either side.
     struct SceneConstants
     {
         DirectX::XMFLOAT4X4 modelViewProjection;
@@ -121,7 +126,7 @@ private:
         DirectX::XMFLOAT4 iblOptions = DirectX::XMFLOAT4(5.0f, 1.0f, 1.0f, 1.0f);
         DirectX::XMFLOAT4 skyTopColor = DirectX::XMFLOAT4(0.12f, 0.22f, 0.36f, 1.0f);
         DirectX::XMFLOAT4 skyHorizonColor = DirectX::XMFLOAT4(0.035f, 0.045f, 0.055f, 1.0f);
-        DirectX::XMFLOAT4 shadowOptions = DirectX::XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+        DirectX::XMFLOAT4 shadowOptions = DirectX::XMFLOAT4(1.0f, 0.85f, 0.0015f, 1.5f / 2048.0f);
     };
 
     struct IblConstants
@@ -169,6 +174,7 @@ private:
     void UploadTextureSubresources(ID3D12Resource* texture, const std::vector<D3D12_SUBRESOURCE_DATA>& subresources);
     void CreateConstantBuffer();
     void CreateIblResources();
+    void CreateShadowResources();
     bool GenerateIblMaps(std::string& diagnostics);
     void DispatchIbl(UINT mode, ID3D12Resource* output, UINT mipLevel, UINT width, UINT height, float roughness);
     void InitializeImGui(HWND hwnd);
@@ -177,7 +183,11 @@ private:
     void MoveToNextFrame();
     void UpdateConstants(float deltaSeconds);
     void DrawSky();
+    void RenderShadowMap();
     void DrawScene();
+    // Shadow fitting is derived from the current model transform and scene
+    // bounds, so project/UI/AI transform edits affect the caster volume.
+    DirectX::XMMATRIX ComputeShadowViewProjection() const;
     DirectX::XMMATRIX ModelMatrix() const;
     void TransformedSceneBounds(DirectX::XMFLOAT3& boundsMin, DirectX::XMFLOAT3& boundsMax) const;
     void CameraBasis(DirectX::XMVECTOR& forward, DirectX::XMVECTOR& right, DirectX::XMVECTOR& up) const;
@@ -225,12 +235,14 @@ private:
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_computeRootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_pbrPipelineState;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_skyPipelineState;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_shadowPipelineState;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_iblPipelineState;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_vertexBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_indexBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_constantBuffer;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_sceneTarget;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_sceneDepth;
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_shadowMap;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_fallbackTexture;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_environmentTexture;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_irradianceTexture;
@@ -246,6 +258,7 @@ private:
     UINT m_indexCount = 0;
     std::uint8_t* m_constantBufferMapped = nullptr;
     D3D12_RESOURCE_STATES m_sceneTargetState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    D3D12_RESOURCE_STATES m_shadowMapState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     D3D12_CPU_DESCRIPTOR_HANDLE m_sceneSrvCpu = {};
     D3D12_GPU_DESCRIPTOR_HANDLE m_sceneSrvGpu = {};
     SrvAllocator m_srvAllocator;
@@ -262,13 +275,17 @@ private:
     float m_cameraYaw = 0.0f;
     float m_cameraPitch = 0.12f;
     float m_cameraDistance = 4.0f;
+    float m_cameraFovDegrees = 45.0f;
     float m_cameraMoveScale = 1.0f;
     SceneConstants m_sceneConstants = {};
     LookDevConstants m_lookDevConstants = {};
     rb::ModelTransform m_modelTransform;
     rb::LookDevEnvironment m_lookDevEnvironment;
     rb::LookDevViewSettings m_lookDevViewSettings;
+    rb::LookDevShadowSettings m_lookDevShadowSettings;
     std::string m_environmentStatus = "Using SkyColor background.";
+    std::string m_shadowStatus = "Sun shadow enabled: 2048.";
     UINT m_environmentMipLevels = 1;
+    UINT m_shadowResolution = 2048;
 };
 }

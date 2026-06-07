@@ -8,6 +8,12 @@ ChatLookDev は、glTF/GLB の PBR モデルを確認するための小さな Di
 
 ![ChatLookDev screenshot](images/screenshot.png)
 
+v1.2 の追加表示例:
+
+![Sponza with Sun shadow](images/image2.png)
+
+![Normal display mode](images/image3.png)
+
 ## スコープ
 
 - Direct3D 12 の raster PBR パイプライン。
@@ -18,6 +24,8 @@ ChatLookDev は、glTF/GLB の PBR モデルを確認するための小さな Di
 - DirectXTex による `.hdr` と float DDS の環境テクスチャ読み込み。
 - GPU 上での split-sum IBL 事前計算。
 - Sun + IBL の物理ベース風コントロール: 太陽光の照度 lux、露出 EV、HDRI intensity multiplier。
+- 単一 Sun shadow map。strength、bias、softness、fit scale、Shadow Mask debug view に対応。
+- Normal や Shadow Mask などの debug display mode。
 - ImGui docking パネル: Viewport、Scene、Material、Lighting、AI Chat、Diagnostics / Stats。
 - ImGui と AI action system からのモデル transform 制御。
 - llama.cpp の in-process ローカル LLM サービス。既定は CPU-only。任意で CUDA または Vulkan backend ビルドに対応。
@@ -69,13 +77,13 @@ llama.cpp Vulkan backend を明示的に要求する場合:
 CPU package:
 
 ```powershell
-.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend CPU -Configuration Release
+.\Scripts\PackageRelease.ps1 -Version v1.2.0 -Backend CPU -Configuration Release
 ```
 
 Vulkan LLM package:
 
 ```powershell
-.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend Vulkan -Configuration Release
+.\Scripts\PackageRelease.ps1 -Version v1.2.0 -Backend Vulkan -Configuration Release
 ```
 
 このスクリプトは選択した backend をビルドし、runtime ZIP、symbols ZIP、`dist/SHA256SUMS.txt` を生成します。runtime package には `ChatLookDev.exe`、Agility SDK DLL、事前コンパイル済み shader、documentation、screenshot、`imgui.ini`、英語/日本語 release notes、model 配置メモを含めます。GGUF model、PDB、build cache、`imgui.user.ini` は runtime ZIP に含めません。
@@ -83,7 +91,7 @@ Vulkan LLM package:
 認証情報が使える環境で git tag 作成と GitHub Release の作成/更新まで行う場合:
 
 ```powershell
-.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend Vulkan -Configuration Release -CreateTag -PublishGitHubRelease
+.\Scripts\PackageRelease.ps1 -Version v1.2.0 -Backend Vulkan -Configuration Release -CreateTag -PublishGitHubRelease
 ```
 
 ## モデルの配置
@@ -95,6 +103,11 @@ Assets/Models/gemma-4-E4B-it/gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 GGUF ファイルは git の管理対象外です。モデルが配置されていない場合でもアプリケーションは起動し、AI Chat パネルにファイルが見つからないことを表示します。
+
+## ドキュメント
+
+- [LLM と ImGui の接続](docs/llm-imgui-integration.ja.md)
+- [LookDev rendering notes](docs/lookdev-rendering.ja.md)
 
 ## UI layout
 

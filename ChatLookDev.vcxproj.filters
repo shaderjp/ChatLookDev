@@ -47,6 +47,7 @@
     <None Include="Shaders\ChatLookDevShaderABI.hlsli"><Filter>Shaders</Filter></None>
     <None Include="Shaders\IblPrecompute.hlsl"><Filter>Shaders</Filter></None>
     <None Include="Shaders\LookDevPBR.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="Shaders\ShadowDepth.hlsl"><Filter>Shaders</Filter></None>
     <None Include="Shaders\Sky.hlsl"><Filter>Shaders</Filter></None>
   </ItemGroup>
 </Project>

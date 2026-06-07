@@ -77,6 +77,7 @@ struct ViewportCamera
     float yaw = 0.0f;
     float pitch = 0.12f;
     float distance = 4.0f;
+    float fovDegrees = 45.0f;
 };
 
 struct ModelTransform
@@ -106,6 +107,18 @@ struct LookDevViewSettings
     float turntableSpeed = 0.35f;
 };
 
+// v1.2 uses one orthographic Sun shadow map. Softness is a PCF radius in
+// shadow texels, while fitScale expands the fitted scene bounds.
+struct LookDevShadowSettings
+{
+    bool enabled = true;
+    std::uint32_t resolution = 2048;
+    float strength = 0.85f;
+    float bias = 0.0015f;
+    float softness = 1.5f;
+    float fitScale = 1.25f;
+};
+
 struct ProjectFile
 {
     std::wstring path;
@@ -117,6 +130,7 @@ struct ProjectFile
     bool hasViewportCamera = false;
     LookDevEnvironment lookDevEnvironment;
     LookDevViewSettings lookDevViewSettings;
+    LookDevShadowSettings lookDevShadowSettings;
     std::vector<MaterialAssignment> materialAssignments;
 };
 }

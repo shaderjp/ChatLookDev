@@ -45,7 +45,7 @@ When the user presses `Send`, `SendChatPrompt()` trims the input, builds message
 - `llama_context` with configured context size and CPU thread count.
 - a short-lived sampler probe to verify that the requested sampler/grammar configuration can initialize.
 
-`Generate()` creates a fresh `llama_sampler` chain, clears context memory, applies the model chat template, tokenizes the prompt, decodes prompt tokens, then samples up to `maxTokens`. The response event includes:
+`Generate()` creates a fresh `llama_sampler` chain, clears context memory, applies the model chat template, tokenizes the prompt, decodes prompt tokens in chunks no larger than `llama_n_batch(context)`, then samples up to `maxTokens`. Chunked prompt decode keeps large scenes from sending an oversized prompt batch into llama.cpp.
 
 - raw generated text
 - prompt token count
@@ -75,6 +75,7 @@ Allowed methods are:
 - `set_view_settings`
 - `set_environment_settings`
 - `set_sun_settings`
+- `set_shadow_settings`
 - `set_material_preview`
 - `set_camera`
 - `set_model_transform`
@@ -115,6 +116,10 @@ This keeps ImGui and D3D12 calls off the worker thread and avoids cross-thread r
 Project JSON stores LLM runtime settings such as model path, context tokens, max tokens, GPU layers, CPU threads, sampling settings, and `structuredJson`.
 
 Action History is session-only. It is intentionally not serialized into project files.
+
+## Prompt State Size
+
+`BuildControlStateJson()` sends compact renderer state to the LLM. Large scenes can contain many materials, so the prompt includes `materialCount`, the selected material name, and a bounded `materialsPreview` list instead of serializing every material. The selected material is always included in that preview.
 
 ## Notes
 

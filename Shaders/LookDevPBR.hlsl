@@ -83,6 +83,53 @@ float3 FresnelSchlick(float cosTheta, float3 f0)
     return f0 + (1.0 - f0) * pow(saturate(1.0 - cosTheta), 5.0);
 }
 
+float SampleSunShadow(float3 worldPosition, float3 normal)
+{
+    // Returns 1 for fully lit and 0 for fully occluded. Only direct Sun
+    // lighting consumes this mask; IBL, emissive, and sky remain unshadowed.
+    if (gShadowOptions.x <= 0.5)
+    {
+        return 1.0;
+    }
+
+    const float4 shadowPosition = mul(float4(worldPosition, 1.0), gShadowViewProjection);
+    if (shadowPosition.w <= 0.0)
+    {
+        return 1.0;
+    }
+
+    const float3 shadowNdc = shadowPosition.xyz / shadowPosition.w;
+    const float2 shadowUv = shadowNdc.xy * float2(0.5, -0.5) + float2(0.5, 0.5);
+    if (shadowUv.x < 0.0 || shadowUv.x > 1.0 || shadowUv.y < 0.0 || shadowUv.y > 1.0 || shadowNdc.z < 0.0 || shadowNdc.z > 1.0)
+    {
+        return 1.0;
+    }
+
+    const float3 lightDirection = normalize(-gLightDirectionIntensity.xyz);
+    const float slopeBias = gShadowOptions.z * lerp(2.5, 0.75, saturate(dot(normal, lightDirection)));
+    const float compareDepth = saturate(shadowNdc.z - slopeBias);
+    if (gShadowOptions.w <= 0.0)
+    {
+        const float hardVisibility = gShadowTexture.SampleCmpLevelZero(gShadowComparisonSampler, shadowUv, compareDepth);
+        return lerp(1.0, hardVisibility, saturate(gShadowOptions.y));
+    }
+
+    const float texelStep = gShadowOptions.w;
+    float visibility = 0.0;
+
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            visibility += gShadowTexture.SampleCmpLevelZero(gShadowComparisonSampler, shadowUv + float2(x, y) * texelStep, compareDepth);
+        }
+    }
+    visibility /= 9.0;
+    return lerp(1.0, visibility, saturate(gShadowOptions.y));
+}
+
 float4 PSMain(RBPixelInput input) : SV_Target0
 {
     const float3 vertexNormal = normalize(input.worldNormal);
@@ -138,7 +185,8 @@ float4 PSMain(RBPixelInput input) : SV_Target0
     const float3 specularBrdf = distribution * geometry * fresnel / max(4.0 * nDotV * nDotL, 1.0e-5);
     const float3 diffuseBrdf = (1.0 - fresnel) * (1.0 - metallic) * baseColor / PI;
     const float3 sunRadiance = gSunColorIntensity.rgb * gSunColorIntensity.a;
-    const float3 sunLighting = (diffuseBrdf + specularBrdf) * sunRadiance * nDotL;
+    const float shadowVisibility = SampleSunShadow(input.worldPosition, normal);
+    const float3 sunLighting = (diffuseBrdf + specularBrdf) * sunRadiance * nDotL * shadowVisibility;
 
     const float3 reflectionDirection = reflect(-viewDirection, normal);
     const float3 diffuseIbl = SampleDiffuseIbl(normal) * baseColor * (1.0 - metallic);
@@ -155,6 +203,7 @@ float4 PSMain(RBPixelInput input) : SV_Target0
     if (displayMode == RB_DISPLAY_AO) { return float4(occlusion.xxx, 1.0); }
     if (displayMode == RB_DISPLAY_EMISSIVE) { return float4(ApplyToneMapping(emissive), 1.0); }
     if (displayMode == RB_DISPLAY_LIGHTING_ONLY) { return float4(ApplyToneMapping(ambient + sunLighting), 1.0); }
+    if (displayMode == RB_DISPLAY_SHADOW_MASK) { return float4(shadowVisibility.xxx, 1.0); }
 
     return float4(ApplyToneMapping(beauty), alpha);
 }

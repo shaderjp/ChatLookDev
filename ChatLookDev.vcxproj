@@ -152,6 +152,7 @@
     <None Include="Shaders\ChatLookDevShaderABI.hlsli" />
     <None Include="Shaders\IblPrecompute.hlsl" />
     <None Include="Shaders\LookDevPBR.hlsl" />
+    <None Include="Shaders\ShadowDepth.hlsl" />
     <None Include="Shaders\Sky.hlsl" />
   </ItemGroup>
   <ItemGroup>
@@ -175,7 +176,7 @@
   <Target Name="BuildThirdParty" BeforeTargets="ClCompile">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -LlamaCppRoot &quot;$(LlamaCppRoot)&quot; -LlamaCppBuildRoot &quot;$(LlamaCppBuildRoot)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -LlamaCuda &quot;$(LlamaCuda)&quot; -LlamaVulkan &quot;$(LlamaVulkan)&quot; -VisualStudioVersion &quot;$(VisualStudioVersion)&quot;" />
   </Target>
-  <Target Name="CompileShaders" BeforeTargets="ClCompile" Inputs="Shaders\LookDevPBR.hlsl;Shaders\Sky.hlsl;Shaders\IblPrecompute.hlsl;Shaders\ChatLookDevShaderABI.hlsli" Outputs="$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso">
+  <Target Name="CompileShaders" BeforeTargets="ClCompile" Inputs="Shaders\LookDevPBR.hlsl;Shaders\ShadowDepth.hlsl;Shaders\Sky.hlsl;Shaders\IblPrecompute.hlsl;Shaders\ChatLookDevShaderABI.hlsli" Outputs="$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso;$(CompiledShaderDir)ShadowDepth.VSMain.vs_6_9.cso;$(CompiledShaderDir)ShadowDepth.PSMain.ps_6_9.cso;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso">
     <MakeDir Directories="$(CompiledShaderDir)" />
     <Error Condition="!Exists('$(DxcExe)')" Text="DXC was not found at $(DxcExe). Restore NuGet packages first." />
     <PropertyGroup>
@@ -185,6 +186,8 @@
     </PropertyGroup>
     <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E VSMain -T vs_6_9 -Fo &quot;$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\LookDevPBR.hlsl&quot;" />
     <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E PSMain -T ps_6_9 -Fo &quot;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso&quot; &quot;$(ProjectDir)Shaders\LookDevPBR.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E VSMain -T vs_6_9 -Fo &quot;$(CompiledShaderDir)ShadowDepth.VSMain.vs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\ShadowDepth.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E PSMain -T ps_6_9 -Fo &quot;$(CompiledShaderDir)ShadowDepth.PSMain.ps_6_9.cso&quot; &quot;$(ProjectDir)Shaders\ShadowDepth.hlsl&quot;" />
     <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E VSMain -T vs_6_9 -Fo &quot;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\Sky.hlsl&quot;" />
     <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E PSMain -T ps_6_9 -Fo &quot;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso&quot; &quot;$(ProjectDir)Shaders\Sky.hlsl&quot;" />
     <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E CSMain -T cs_6_9 -Fo &quot;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\IblPrecompute.hlsl&quot;" />

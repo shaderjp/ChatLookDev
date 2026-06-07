@@ -8,6 +8,12 @@ This repository is a sample being built with Codex and vibe coding. It is meant 
 
 ![ChatLookDev screenshot](images/screenshot.png)
 
+Additional v1.2 views:
+
+![Sponza with Sun shadow](images/image2.png)
+
+![Normal display mode](images/image3.png)
+
 ## Scope
 
 - Direct3D 12 raster PBR pipeline.
@@ -18,6 +24,8 @@ This repository is a sample being built with Codex and vibe coding. It is meant 
 - `.hdr` and float DDS environment textures through DirectXTex.
 - Split-sum IBL precomputation on GPU.
 - Sun + IBL physical-style controls: sun illuminance in lux, exposure EV, HDRI intensity multiplier.
+- Single Sun shadow map with strength, bias, softness, fit scale, and Shadow Mask debug view.
+- Debug display modes including Normal and Shadow Mask.
 - ImGui docking panels: Viewport, Scene, Material, Lighting, AI Chat, Diagnostics / Stats.
 - Model transform controls through ImGui and the AI action system.
 - llama.cpp in-process local LLM service, CPU-only by default with optional CUDA or Vulkan backend builds.
@@ -69,13 +77,13 @@ To request the llama.cpp Vulkan backend explicitly:
 CPU package:
 
 ```powershell
-.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend CPU -Configuration Release
+.\Scripts\PackageRelease.ps1 -Version v1.2.0 -Backend CPU -Configuration Release
 ```
 
 Vulkan LLM package:
 
 ```powershell
-.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend Vulkan -Configuration Release
+.\Scripts\PackageRelease.ps1 -Version v1.2.0 -Backend Vulkan -Configuration Release
 ```
 
 The script builds the selected backend, stages a runtime ZIP, stages a symbols ZIP, and updates `dist/SHA256SUMS.txt`. Runtime packages include `ChatLookDev.exe`, Agility SDK DLLs, precompiled shaders, documentation, screenshots, `imgui.ini`, English/Japanese release notes, and a model placement note. GGUF model files, PDB files, build caches, and `imgui.user.ini` are excluded from runtime ZIPs.
@@ -83,7 +91,7 @@ The script builds the selected backend, stages a runtime ZIP, stages a symbols Z
 To create the git tag and publish/update a GitHub Release when credentials are available:
 
 ```powershell
-.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend Vulkan -Configuration Release -CreateTag -PublishGitHubRelease
+.\Scripts\PackageRelease.ps1 -Version v1.2.0 -Backend Vulkan -Configuration Release -CreateTag -PublishGitHubRelease
 ```
 
 ## Model Path
@@ -95,6 +103,11 @@ Assets/Models/gemma-4-E4B-it/gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 GGUF files are ignored by git. The application still starts without the model and reports the missing file in the AI Chat panel.
+
+## Documentation
+
+- [LLM and ImGui integration](docs/llm-imgui-integration.md)
+- [LookDev rendering notes](docs/lookdev-rendering.md)
 
 ## UI Layout
 

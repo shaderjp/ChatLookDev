@@ -34,6 +34,7 @@ cbuffer RenderBuilderLookDev : register(b2)
     float4 gIblOptions;
     float4 gSkyTopColor;
     float4 gSkyHorizonColor;
+    // x: enabled, y: strength, z: receiver bias, w: PCF texel step.
     float4 gShadowOptions;
 };
 
@@ -72,8 +73,11 @@ Texture2D gEnvironmentTexture : register(t6);
 Texture2D gIrradianceTexture : register(t7);
 Texture2D gPrefilterTexture : register(t8);
 Texture2D gBrdfLutTexture : register(t9);
+// The shadow map is in the shared t6-t10 table used by the PBR and sky passes.
+Texture2D<float> gShadowTexture : register(t10);
 SamplerState gLinearWrapSampler : register(s0);
 SamplerState gLinearClampSampler : register(s1);
+SamplerComparisonState gShadowComparisonSampler : register(s2);
 
 struct RBVertexInput
 {

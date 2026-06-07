@@ -82,6 +82,7 @@ private:
     void DrawActionHistoryPanel();
     void DrawDiagnosticsPanel();
     void RenderFrame(float deltaSeconds);
+    void DrawSunDirectionOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
     void HandleViewportInput(const ImVec2& imageMin, const ImVec2& imageMax);
 
     std::filesystem::path OpenFileDialog(const wchar_t* filter) const;

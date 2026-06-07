@@ -94,14 +94,55 @@ void FillBatch(llama_batch& batch, const std::vector<int>& tokens, int startPos,
     }
 }
 
+bool DecodeTokensInChunks(llama_context* context, const std::vector<int>& tokens, int startPos, int32_t maxBatchTokens, std::string& diagnostics)
+{
+    if (tokens.empty())
+    {
+        return true;
+    }
+
+    const int32_t batchCapacity = std::max<int32_t>(1, maxBatchTokens);
+    llama_batch batch = llama_batch_init(batchCapacity, 0, 1);
+    for (std::size_t offset = 0; offset < tokens.size(); offset += static_cast<std::size_t>(batchCapacity))
+    {
+        const int32_t chunkTokens = static_cast<int32_t>(std::min<std::size_t>(static_cast<std::size_t>(batchCapacity), tokens.size() - offset));
+        batch.n_tokens = chunkTokens;
+        for (int32_t i = 0; i < chunkTokens; ++i)
+        {
+            const std::size_t tokenIndex = offset + static_cast<std::size_t>(i);
+            batch.token[i] = tokens[tokenIndex];
+            batch.pos[i] = startPos + static_cast<int>(tokenIndex);
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = tokenIndex + 1 == tokens.size();
+        }
+
+        const int decodeResult = llama_decode(context, batch);
+        if (decodeResult != 0)
+        {
+            llama_batch_free(batch);
+            std::ostringstream message;
+            message << "llama_decode failed while processing prompt chunk at token " << offset
+                    << " (" << chunkTokens << " tokens, ret=" << decodeResult << ").";
+            diagnostics = message.str();
+            return false;
+        }
+    }
+
+    llama_batch_free(batch);
+    return true;
+}
+
 const char* LookDevJsonGrammar()
 {
+    // Grammar narrows generation to known action names and JSON shape. Runtime
+    // validation in ChatLookDevApp is still the authority for parameter safety.
     return R"gbnf(
 root ::= ws "{" ws reply-field ws "," ws actions-field ws "}" ws
 reply-field ::= "\"reply\"" ws ":" ws string
 actions-field ::= "\"actions\"" ws ":" ws "[" ws (action (ws "," ws action)*)? ws "]"
 action ::= "{" ws "\"method\"" ws ":" ws method ws "," ws "\"params\"" ws ":" ws object ws "}"
-method ::= "\"set_view_settings\"" | "\"set_environment_settings\"" | "\"set_sun_settings\"" | "\"set_material_preview\"" | "\"set_camera\"" | "\"set_model_transform\""
+method ::= "\"set_view_settings\"" | "\"set_environment_settings\"" | "\"set_sun_settings\"" | "\"set_shadow_settings\"" | "\"set_material_preview\"" | "\"set_camera\"" | "\"set_model_transform\""
 object ::= "{" ws (pair (ws "," ws pair)*)? ws "}"
 pair ::= string ws ":" ws value
 array ::= "[" ws (value (ws "," ws value)*)? ws "]"
@@ -441,20 +482,34 @@ LocalLlmService::GenerationResult LocalLlmService::Generate(const std::vector<Lo
     {
         throw std::runtime_error("Prompt tokenization produced no tokens.");
     }
+    const std::size_t contextTokens = static_cast<std::size_t>(llama_n_ctx(context));
     const std::size_t requiredTokens = promptTokens.size() + static_cast<std::size_t>(std::max(1, config.maxTokens));
-    if (requiredTokens >= static_cast<std::size_t>(llama_n_ctx(context)))
+    if (requiredTokens >= contextTokens)
     {
-        throw std::runtime_error("Prompt does not fit in the configured context.");
+        std::ostringstream message;
+        message << "Prompt does not fit in the configured context. Prompt tokens: "
+                << promptTokens.size() << ", max reply tokens: " << std::max(1, config.maxTokens)
+                << ", context tokens: " << contextTokens << ".";
+        throw std::runtime_error(message.str());
     }
 
-    llama_batch batch = llama_batch_init(static_cast<int32_t>(std::max<std::size_t>(promptTokens.size(), 1)), 0, 1);
-    FillBatch(batch, promptTokens, 0, true);
-    if (llama_decode(context, batch) != 0)
+    const int32_t promptBatchTokens = std::max<int32_t>(1, static_cast<int32_t>(llama_n_batch(context)));
+    std::string decodeDiagnostics;
+    if (!DecodeTokensInChunks(context, promptTokens, 0, promptBatchTokens, decodeDiagnostics))
     {
-        llama_batch_free(batch);
-        throw std::runtime_error("llama_decode failed while processing the prompt.");
+        throw std::runtime_error(decodeDiagnostics);
     }
-    llama_batch_free(batch);
+    if (promptTokens.size() > static_cast<std::size_t>(promptBatchTokens))
+    {
+        std::ostringstream chunkInfo;
+        chunkInfo << "Prompt decoded in " << ((promptTokens.size() + static_cast<std::size_t>(promptBatchTokens) - 1) / static_cast<std::size_t>(promptBatchTokens))
+                  << " chunks (batch limit " << promptBatchTokens << ").";
+        if (!result.diagnostics.empty())
+        {
+            result.diagnostics += "\n";
+        }
+        result.diagnostics += chunkInfo.str();
+    }
 
     int position = static_cast<int>(promptTokens.size());
     result.finishReason = "max_tokens";
