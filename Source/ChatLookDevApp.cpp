@@ -702,6 +702,11 @@ void ChatLookDevApp::DrawMainMenu()
         {
             SaveProjectAs();
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset UI Layout"))
+        {
+            ResetUiLayout();
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Scene"))
@@ -1526,6 +1531,18 @@ void ChatLookDevApp::EnsureMaterialSelection()
 void ChatLookDevApp::MarkProjectDirty()
 {
     m_projectDirty = true;
+}
+
+void ChatLookDevApp::ResetUiLayout()
+{
+    if (m_backend.ResetImGuiLayout())
+    {
+        m_projectDiagnostics = "Reset ImGui layout to default.";
+    }
+    else
+    {
+        m_projectDiagnostics = "Failed to reset ImGui layout.";
+    }
 }
 
 void ChatLookDevApp::SaveProject()

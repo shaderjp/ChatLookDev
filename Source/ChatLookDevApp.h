@@ -95,6 +95,7 @@ private:
     void ApplyImportedTextureOverrides(rb::ImportedScene& scene);
     void EnsureMaterialSelection();
     void MarkProjectDirty();
+    void ResetUiLayout();
 
     void SaveProject();
     void SaveProjectAs();

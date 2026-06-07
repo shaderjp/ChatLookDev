@@ -70,6 +70,7 @@ public:
     void SetLookDevViewSettings(const rb::LookDevViewSettings& settings);
     void SetDebugViewMode(rb::LookDevDisplayMode displayMode);
     void SetModelTransform(const rb::ModelTransform& transform);
+    bool ResetImGuiLayout();
 
     rb::ViewportCamera CameraState() const;
     void SetCameraState(const rb::ViewportCamera& camera);
@@ -189,6 +190,10 @@ private:
     void ThrowIfFailed(HRESULT hr, const char* message) const;
 
     std::filesystem::path m_rootDirectory;
+    std::filesystem::path m_imguiDefaultIniFile;
+    std::filesystem::path m_imguiUserIniFile;
+    std::string m_imguiDefaultIniPath;
+    std::string m_imguiUserIniPath;
     HWND m_hwnd = nullptr;
     UINT m_width = 0;
     UINT m_height = 0;

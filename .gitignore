@@ -32,7 +32,10 @@
 *.bak
 *.swp
 imgui.ini
+!/imgui.ini
+imgui.user.ini
 Assets/Models/**/*.gguf
+/dist/
 
 build/
 Build/

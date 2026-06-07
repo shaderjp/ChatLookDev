@@ -12,7 +12,8 @@ param(
     [Parameter(Mandatory = $true)][string]$MSBuildPath,
     [Parameter(Mandatory = $true)][string]$Configuration,
     [ValidateSet('ON', 'OFF')][string]$LlamaCuda = 'OFF',
-    [ValidateSet('ON', 'OFF')][string]$LlamaVulkan = 'OFF'
+    [ValidateSet('ON', 'OFF')][string]$LlamaVulkan = 'OFF',
+    [string]$VisualStudioVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,6 +96,12 @@ function Copy-FirstMatch {
 
 function Get-CMakeGeneratorArgs {
     $help = cmake --help 2>$null
+    if ($VisualStudioVersion -like '18.*' -and $help -match 'Visual Studio 18 2026') {
+        return @('-G', 'Visual Studio 18 2026', '-A', 'x64')
+    }
+    if ($VisualStudioVersion -like '17.*' -and $help -match 'Visual Studio 17 2022') {
+        return @('-G', 'Visual Studio 17 2022', '-A', 'x64')
+    }
     if ($help -match 'Visual Studio 18 2026') {
         return @('-G', 'Visual Studio 18 2026', '-A', 'x64')
     }

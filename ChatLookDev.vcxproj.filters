@@ -13,6 +13,9 @@
     <Filter Include="ThirdParty\ImGui">
       <UniqueIdentifier>{839D3543-A4D0-44D0-9E85-BB2A80B46E0A}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Scripts">
+      <UniqueIdentifier>{D7E5DC7C-60AD-461D-8753-78678610F5D2}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Source\ChatLookDevApp.cpp"><Filter>Source</Filter></ClCompile>
@@ -39,6 +42,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="BuildThirdParty.ps1" />
+    <None Include="Scripts\PackageRelease.ps1"><Filter>Scripts</Filter></None>
+    <None Include="imgui.ini" />
     <None Include="Shaders\ChatLookDevShaderABI.hlsli"><Filter>Shaders</Filter></None>
     <None Include="Shaders\IblPrecompute.hlsl"><Filter>Shaders</Filter></None>
     <None Include="Shaders\LookDevPBR.hlsl"><Filter>Shaders</Filter></None>

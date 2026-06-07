@@ -1,6 +1,7 @@
 #include "D3D12Backend.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_win32.h>
 
@@ -123,6 +124,12 @@ std::wstring LowerExtension(const std::filesystem::path& path)
         return static_cast<wchar_t>(std::towlower(ch));
     });
     return extension;
+}
+
+std::string PathToUtf8(const std::filesystem::path& path)
+{
+    const auto text = path.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(text.c_str()), text.size());
 }
 
 std::string HResultMessage(HRESULT hr)
@@ -1438,6 +1445,13 @@ void D3D12Backend::InitializeImGui(HWND hwnd)
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    m_imguiDefaultIniFile = (m_rootDirectory / "imgui.ini").lexically_normal();
+    m_imguiUserIniFile = (m_rootDirectory / "imgui.user.ini").lexically_normal();
+    m_imguiDefaultIniPath = PathToUtf8(m_imguiDefaultIniFile);
+    m_imguiUserIniPath = PathToUtf8(m_imguiUserIniFile);
+    io.IniFilename = m_imguiUserIniPath.c_str();
+    std::error_code ec;
+    ImGui::LoadIniSettingsFromDisk(std::filesystem::exists(m_imguiUserIniFile, ec) ? m_imguiUserIniPath.c_str() : m_imguiDefaultIniPath.c_str());
     LoadJapaneseImGuiFonts(io);
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(hwnd);
@@ -1456,6 +1470,21 @@ void D3D12Backend::InitializeImGui(HWND hwnd)
         throw std::runtime_error("ImGui_ImplDX12_Init failed.");
     }
     m_imguiInitialized = true;
+}
+
+bool D3D12Backend::ResetImGuiLayout()
+{
+    if (!m_imguiInitialized || m_imguiDefaultIniPath.empty() || m_imguiUserIniPath.empty())
+    {
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::remove(m_imguiUserIniFile, ec);
+    ImGui::ClearIniSettings();
+    ImGui::LoadIniSettingsFromDisk(m_imguiDefaultIniPath.c_str());
+    ImGui::SaveIniSettingsToDisk(m_imguiUserIniPath.c_str());
+    return true;
 }
 
 void D3D12Backend::ImGuiSrvAllocate(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* cpu, D3D12_GPU_DESCRIPTOR_HANDLE* gpu)

@@ -26,8 +26,7 @@ Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tr
 
 ## Requirements
 
-- Visual Studio 2026 Insiders with MSBuild under `C:\Program Files\Microsoft Visual Studio\18\Insiders`.
-- Platform toolset `v145`.
+- Visual Studio 2026 Insiders with toolset `v145`, or Visual Studio 2022 with toolset `v143`.
 - Windows SDK `10.0.26100.0`.
 - CMake for Assimp and llama.cpp dependency builds.
 - Optional: CUDA Toolkit only when building with `/p:LlamaCuda=ON`.
@@ -35,9 +34,19 @@ Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tr
 
 ## Build
 
+Visual Studio 2026:
+
 ```powershell
 & "C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\amd64\MSBuild.exe" .\ChatLookDev.sln /m /p:Configuration=Debug /p:Platform=x64 /p:LlamaCuda=OFF
 ```
+
+Visual Studio 2022:
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" .\ChatLookDev.sln /m /p:Configuration=Debug /p:Platform=x64 /p:LlamaCuda=OFF
+```
+
+The project selects `v145` when built by VS 2026 MSBuild and `v143` when built by VS 2022 MSBuild.
 
 The default LLM build is CPU-only. To request CUDA explicitly:
 
@@ -55,6 +64,28 @@ To request the llama.cpp Vulkan backend explicitly:
 
 `LlamaVulkan=ON` requires `VULKAN_SDK` to point at a Vulkan SDK installation containing `Bin/glslc.exe`, `Lib/vulkan-1.lib`, and `Include/vulkan/vulkan.h`.
 
+## Release Packages
+
+CPU package:
+
+```powershell
+.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend CPU -Configuration Release
+```
+
+Vulkan LLM package:
+
+```powershell
+.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend Vulkan -Configuration Release
+```
+
+The script builds the selected backend, stages a runtime ZIP, stages a symbols ZIP, and updates `dist/SHA256SUMS.txt`. Runtime packages include `ChatLookDev.exe`, Agility SDK DLLs, precompiled shaders, documentation, screenshots, `imgui.ini`, English/Japanese release notes, and a model placement note. GGUF model files, PDB files, build caches, and `imgui.user.ini` are excluded from runtime ZIPs.
+
+To create the git tag and publish/update a GitHub Release when credentials are available:
+
+```powershell
+.\Scripts\PackageRelease.ps1 -Version v1.1.1 -Backend Vulkan -Configuration Release -CreateTag -PublishGitHubRelease
+```
+
 ## Model Path
 
 The default GGUF path is:
@@ -64,6 +95,10 @@ Assets/Models/gemma-4-E4B-it/gemma-4-E4B-it-Q4_K_M.gguf
 ```
 
 GGUF files are ignored by git. The application still starts without the model and reports the missing file in the AI Chat panel.
+
+## UI Layout
+
+The tracked `imgui.ini` file is the default docking layout seed. Runtime layout changes are saved to `imgui.user.ini`, which is ignored by git. Use `Project > Reset UI Layout` to discard the user layout and reload the default layout.
 
 ## Project Files
 

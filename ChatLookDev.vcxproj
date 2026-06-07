@@ -25,16 +25,22 @@
     <Microsoft_Direct3D_D3D12_SkipIncludeDir>false</Microsoft_Direct3D_D3D12_SkipIncludeDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="ToolsetSelection">
+    <ChatLookDevPlatformToolset Condition="'$(ChatLookDevPlatformToolset)' == '' and '$(VisualStudioVersion)' &gt;= '18.0'">v145</ChatLookDevPlatformToolset>
+    <ChatLookDevPlatformToolset Condition="'$(ChatLookDevPlatformToolset)' == ''">v143</ChatLookDevPlatformToolset>
+    <ChatLookDevVsFamily Condition="'$(ChatLookDevPlatformToolset)' == 'v145'">2026</ChatLookDevVsFamily>
+    <ChatLookDevVsFamily Condition="'$(ChatLookDevVsFamily)' == ''">2022</ChatLookDevVsFamily>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>$(ChatLookDevPlatformToolset)</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v145</PlatformToolset>
+    <PlatformToolset>$(ChatLookDevPlatformToolset)</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -44,18 +50,18 @@
     <IntDir>$(ProjectDir)Obj\$(Platform)\$(Configuration)\</IntDir>
     <TargetName>ChatLookDev</TargetName>
     <AssimpRoot>$(ProjectDir)ThirdParty\assimp</AssimpRoot>
-    <AssimpBuildRoot>$(AssimpRoot)\Build\$(Platform)\$(Configuration)</AssimpBuildRoot>
+    <AssimpBuildRoot>$(AssimpRoot)\Build\$(ChatLookDevPlatformToolset)\$(Platform)\$(Configuration)</AssimpBuildRoot>
     <AssimpLibDir>$(AssimpBuildRoot)\lib\$(Configuration)</AssimpLibDir>
     <AssimpZlibDir>$(AssimpBuildRoot)\contrib\zlib\$(Configuration)</AssimpZlibDir>
     <AssimpLibName>assimp-chatlookdev.lib</AssimpLibName>
     <AssimpZlibName>zlib-chatlookdev.lib</AssimpZlibName>
-    <DirectXTexProject>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex_Desktop_2026.vcxproj</DirectXTexProject>
-    <DirectXTexLibDir>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\Bin\Desktop_2026\x64\$(Configuration)</DirectXTexLibDir>
+    <DirectXTexProject>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex_Desktop_$(ChatLookDevVsFamily).vcxproj</DirectXTexProject>
+    <DirectXTexLibDir>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\Bin\Desktop_$(ChatLookDevVsFamily)\x64\$(Configuration)</DirectXTexLibDir>
     <LlamaCppRoot>$(ProjectDir)ThirdParty\llama.cpp</LlamaCppRoot>
     <LlamaCuda Condition="'$(LlamaCuda)'==''">OFF</LlamaCuda>
     <LlamaVulkan Condition="'$(LlamaVulkan)'==''">OFF</LlamaVulkan>
-    <LlamaCppBuildRoot>$(LlamaCppRoot)\Build\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
-    <LlamaCppBuildRoot Condition="'$(LlamaVulkan)'=='ON'">$(ProjectDir)Obj\LlamaVulkan\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
+    <LlamaCppBuildRoot>$(LlamaCppRoot)\Build\$(ChatLookDevPlatformToolset)\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
+    <LlamaCppBuildRoot Condition="'$(LlamaVulkan)'=='ON'">$(ProjectDir)Obj\LlamaVulkan\$(ChatLookDevPlatformToolset)\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
     <VulkanSdkLibDir Condition="'$(VulkanSdkLibDir)'==''">$(VULKAN_SDK)\Lib</VulkanSdkLibDir>
     <NuGetPackageRoot Condition="'$(NuGetPackageRoot)'==''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
     <AgilitySdkBinDir>$(NuGetPackageRoot)microsoft.direct3d.d3d12\1.619.3\build\native\bin\x64\</AgilitySdkBinDir>
@@ -139,6 +145,10 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="BuildThirdParty.ps1" />
+    <None Include="Scripts\PackageRelease.ps1" />
+    <None Include="imgui.ini">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="Shaders\ChatLookDevShaderABI.hlsli" />
     <None Include="Shaders\IblPrecompute.hlsl" />
     <None Include="Shaders\LookDevPBR.hlsl" />
@@ -163,7 +173,7 @@
     <Error Condition="'$(LlamaVulkan)'=='ON' and !Exists('$(VULKAN_SDK)\Include\vulkan\vulkan.h')" Text="LlamaVulkan=ON requires Vulkan SDK headers. Install Vulkan SDK or build with /p:LlamaVulkan=OFF." />
   </Target>
   <Target Name="BuildThirdParty" BeforeTargets="ClCompile">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -LlamaCppRoot &quot;$(LlamaCppRoot)&quot; -LlamaCppBuildRoot &quot;$(LlamaCppBuildRoot)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -LlamaCuda &quot;$(LlamaCuda)&quot; -LlamaVulkan &quot;$(LlamaVulkan)&quot;" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -LlamaCppRoot &quot;$(LlamaCppRoot)&quot; -LlamaCppBuildRoot &quot;$(LlamaCppBuildRoot)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -LlamaCuda &quot;$(LlamaCuda)&quot; -LlamaVulkan &quot;$(LlamaVulkan)&quot; -VisualStudioVersion &quot;$(VisualStudioVersion)&quot;" />
   </Target>
   <Target Name="CompileShaders" BeforeTargets="ClCompile" Inputs="Shaders\LookDevPBR.hlsl;Shaders\Sky.hlsl;Shaders\IblPrecompute.hlsl;Shaders\ChatLookDevShaderABI.hlsli" Outputs="$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso">
     <MakeDir Directories="$(CompiledShaderDir)" />
