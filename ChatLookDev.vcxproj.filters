@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source">
+      <UniqueIdentifier>{82F77657-7683-4A4D-A875-DF9C2E24D206}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Headers">
+      <UniqueIdentifier>{3B902D8A-9811-4C3A-BF40-C339BD77A252}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shaders">
+      <UniqueIdentifier>{D18D9259-C378-4C07-8B48-6E1C2CC28E94}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="ThirdParty\ImGui">
+      <UniqueIdentifier>{839D3543-A4D0-44D0-9E85-BB2A80B46E0A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\ChatLookDevApp.cpp"><Filter>Source</Filter></ClCompile>
+    <ClCompile Include="Source\D3D12Backend.cpp"><Filter>Source</Filter></ClCompile>
+    <ClCompile Include="Source\LocalLlmService.cpp"><Filter>Source</Filter></ClCompile>
+    <ClCompile Include="Source\Main.cpp"><Filter>Source</Filter></ClCompile>
+    <ClCompile Include="Source\SceneImporter.cpp"><Filter>Source</Filter></ClCompile>
+    <ClCompile Include="Source\SimpleJson.cpp"><Filter>Source</Filter></ClCompile>
+    <ClCompile Include="ThirdParty\imgui\imgui.cpp"><Filter>ThirdParty\ImGui</Filter></ClCompile>
+    <ClCompile Include="ThirdParty\imgui\imgui_draw.cpp"><Filter>ThirdParty\ImGui</Filter></ClCompile>
+    <ClCompile Include="ThirdParty\imgui\imgui_tables.cpp"><Filter>ThirdParty\ImGui</Filter></ClCompile>
+    <ClCompile Include="ThirdParty\imgui\imgui_widgets.cpp"><Filter>ThirdParty\ImGui</Filter></ClCompile>
+    <ClCompile Include="ThirdParty\imgui\backends\imgui_impl_dx12.cpp"><Filter>ThirdParty\ImGui</Filter></ClCompile>
+    <ClCompile Include="ThirdParty\imgui\backends\imgui_impl_win32.cpp"><Filter>ThirdParty\ImGui</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\ChatLookDevApp.h"><Filter>Headers</Filter></ClInclude>
+    <ClInclude Include="Source\D3D12Backend.h"><Filter>Headers</Filter></ClInclude>
+    <ClInclude Include="Source\EditorTypes.h"><Filter>Headers</Filter></ClInclude>
+    <ClInclude Include="Source\LocalLlmService.h"><Filter>Headers</Filter></ClInclude>
+    <ClInclude Include="Source\SceneImporter.h"><Filter>Headers</Filter></ClInclude>
+    <ClInclude Include="Source\SceneTypes.h"><Filter>Headers</Filter></ClInclude>
+    <ClInclude Include="Source\SimpleJson.h"><Filter>Headers</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="BuildThirdParty.ps1" />
+    <None Include="Shaders\ChatLookDevShaderABI.hlsli"><Filter>Shaders</Filter></None>
+    <None Include="Shaders\IblPrecompute.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="Shaders\LookDevPBR.hlsl"><Filter>Shaders</Filter></None>
+    <None Include="Shaders\Sky.hlsl"><Filter>Shaders</Filter></None>
+  </ItemGroup>
+</Project>

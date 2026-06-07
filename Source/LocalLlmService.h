@@ -1,0 +1,108 @@
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+struct llama_model;
+struct llama_context;
+struct llama_sampler;
+
+namespace cld
+{
+struct LocalLlmMessage
+{
+    std::string role;
+    std::string content;
+};
+
+struct LocalLlmConfig
+{
+    std::filesystem::path modelPath;
+    int contextTokens = 4096;
+    int maxTokens = 512;
+    int gpuLayers = 0;
+    int threads = 0;
+    float temperature = 0.7f;
+    float topP = 0.9f;
+    int topK = 40;
+};
+
+struct LocalLlmEvent
+{
+    enum class Kind
+    {
+        Status,
+        Response,
+        Error
+    };
+    Kind kind = Kind::Status;
+    std::string text;
+};
+
+enum class LocalLlmState
+{
+    Stopped,
+    Loading,
+    Ready,
+    Generating,
+    Failed
+};
+
+struct LocalLlmStatus
+{
+    LocalLlmState state = LocalLlmState::Stopped;
+    std::string stateText = "Stopped";
+    std::string lastError;
+    std::filesystem::path modelPath;
+    int contextTokens = 0;
+    int gpuLayers = 0;
+};
+
+class LocalLlmService
+{
+public:
+    LocalLlmService();
+    ~LocalLlmService();
+
+    LocalLlmService(const LocalLlmService&) = delete;
+    LocalLlmService& operator=(const LocalLlmService&) = delete;
+
+    bool LoadAsync(const LocalLlmConfig& config);
+    void Stop();
+    bool Submit(const std::vector<LocalLlmMessage>& messages);
+    std::vector<LocalLlmEvent> DrainEvents();
+    LocalLlmStatus Status() const;
+
+private:
+    void LoadWorker(LocalLlmConfig config);
+    void GenerateWorker(std::vector<LocalLlmMessage> messages);
+    std::string Generate(const std::vector<LocalLlmMessage>& messages);
+    std::vector<int> Tokenize(const std::string& text, bool addSpecial, bool parseSpecial) const;
+    std::string TokenToPiece(int token) const;
+    std::string ApplyChatTemplate(const std::vector<LocalLlmMessage>& messages) const;
+    void PushEvent(LocalLlmEvent::Kind kind, const std::string& text);
+    void SetState(LocalLlmState state, const std::string& text);
+    void SetError(const std::string& error);
+    void JoinWorker();
+    void ReleaseModel();
+
+    mutable std::mutex m_mutex;
+    std::deque<LocalLlmEvent> m_events;
+    LocalLlmConfig m_config;
+    LocalLlmState m_state = LocalLlmState::Stopped;
+    std::string m_stateText = "Stopped";
+    std::string m_lastError;
+
+    llama_model* m_model = nullptr;
+    llama_context* m_context = nullptr;
+    llama_sampler* m_sampler = nullptr;
+    std::thread m_worker;
+    std::atomic<bool> m_stopRequested = false;
+};
+}

@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{5AA5B20E-3D98-4D0D-A82F-9C1D70DB45BC}</ProjectGuid>
+    <RootNamespace>ChatLookDev</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <ProjectName>ChatLookDev</ProjectName>
+    <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+    <TargetFrameworkIdentifier>native</TargetFrameworkIdentifier>
+    <TargetFrameworkVersion>v0.0</TargetFrameworkVersion>
+    <Microsoft_Direct3D_D3D12_SkipLibraryCopy>false</Microsoft_Direct3D_D3D12_SkipLibraryCopy>
+    <Microsoft_Direct3D_D3D12_SkipDebugLayerCopy>false</Microsoft_Direct3D_D3D12_SkipDebugLayerCopy>
+    <Microsoft_Direct3D_D3D12_SkipIncludeDir>false</Microsoft_Direct3D_D3D12_SkipIncludeDir>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)Bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)Obj\$(Platform)\$(Configuration)\</IntDir>
+    <TargetName>ChatLookDev</TargetName>
+    <AssimpRoot>$(ProjectDir)ThirdParty\assimp</AssimpRoot>
+    <AssimpBuildRoot>$(AssimpRoot)\Build\$(Platform)\$(Configuration)</AssimpBuildRoot>
+    <AssimpLibDir>$(AssimpBuildRoot)\lib\$(Configuration)</AssimpLibDir>
+    <AssimpZlibDir>$(AssimpBuildRoot)\contrib\zlib\$(Configuration)</AssimpZlibDir>
+    <AssimpLibName>assimp-chatlookdev.lib</AssimpLibName>
+    <AssimpZlibName>zlib-chatlookdev.lib</AssimpZlibName>
+    <DirectXTexProject>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex_Desktop_2026.vcxproj</DirectXTexProject>
+    <DirectXTexLibDir>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\Bin\Desktop_2026\x64\$(Configuration)</DirectXTexLibDir>
+    <LlamaCppRoot>$(ProjectDir)ThirdParty\llama.cpp</LlamaCppRoot>
+    <LlamaCppBuildRoot>$(LlamaCppRoot)\Build\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
+    <LlamaCuda Condition="'$(LlamaCuda)'==''">OFF</LlamaCuda>
+    <NuGetPackageRoot Condition="'$(NuGetPackageRoot)'==''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
+    <AgilitySdkBinDir>$(NuGetPackageRoot)microsoft.direct3d.d3d12\1.619.3\build\native\bin\x64\</AgilitySdkBinDir>
+    <DxcExe>$(NuGetPackageRoot)microsoft.direct3d.dxc\1.9.2602.17\build\native\bin\x64\dxc.exe</DxcExe>
+    <CompiledShaderDir>$(ProjectDir)Bin\Shaders\</CompiledShaderDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(ProjectDir)ThirdParty\llama.cpp\include;$(ProjectDir)ThirdParty\llama.cpp\ggml\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <ConformanceMode>true</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(LlamaCuda)'=='ON'">ggml-cuda.lib;cuda.lib;cudart.lib;cublas.lib;cublasLt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories Condition="'$(LlamaCuda)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-cuda\$(Configuration);$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(ProjectDir)ThirdParty\llama.cpp\include;$(ProjectDir)ThirdParty\llama.cpp\ggml\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <ConformanceMode>true</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(LlamaCuda)'=='ON'">ggml-cuda.lib;cuda.lib;cudart.lib;cublas.lib;cublasLt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories Condition="'$(LlamaCuda)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-cuda\$(Configuration);$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\ChatLookDevApp.cpp" />
+    <ClCompile Include="Source\D3D12Backend.cpp" />
+    <ClCompile Include="Source\LocalLlmService.cpp" />
+    <ClCompile Include="Source\Main.cpp" />
+    <ClCompile Include="Source\SceneImporter.cpp" />
+    <ClCompile Include="Source\SimpleJson.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui_draw.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui_tables.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="ThirdParty\imgui\backends\imgui_impl_dx12.cpp">
+      <DisableSpecificWarnings>4189;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui\backends\imgui_impl_win32.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\ChatLookDevApp.h" />
+    <ClInclude Include="Source\D3D12Backend.h" />
+    <ClInclude Include="Source\EditorTypes.h" />
+    <ClInclude Include="Source\LocalLlmService.h" />
+    <ClInclude Include="Source\SceneImporter.h" />
+    <ClInclude Include="Source\SceneTypes.h" />
+    <ClInclude Include="Source\SimpleJson.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="BuildThirdParty.ps1" />
+    <None Include="Shaders\ChatLookDevShaderABI.hlsli" />
+    <None Include="Shaders\IblPrecompute.hlsl" />
+    <None Include="Shaders\LookDevPBR.hlsl" />
+    <None Include="Shaders\Sky.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Direct3D.D3D12">
+      <Version>1.619.3</Version>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Direct3D.DXC">
+      <Version>1.9.2602.17</Version>
+    </PackageReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="EnsureThirdParty" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\imgui\imgui.cpp')" Text="ThirdParty\imgui is missing. Run git submodule update --init --recursive." />
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex.h')" Text="ThirdParty\DirectXTex is missing. Run git submodule update --init --recursive." />
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\assimp\include\assimp\Importer.hpp')" Text="ThirdParty\assimp is missing. Run git submodule update --init --recursive." />
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\llama.cpp\CMakeLists.txt')" Text="ThirdParty\llama.cpp is missing. Run git submodule update --init --recursive." />
+  </Target>
+  <Target Name="BuildThirdParty" BeforeTargets="ClCompile">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -LlamaCppRoot &quot;$(LlamaCppRoot)&quot; -LlamaCppBuildRoot &quot;$(LlamaCppBuildRoot)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -LlamaCuda &quot;$(LlamaCuda)&quot;" />
+  </Target>
+  <Target Name="CompileShaders" BeforeTargets="ClCompile" Inputs="Shaders\LookDevPBR.hlsl;Shaders\Sky.hlsl;Shaders\IblPrecompute.hlsl;Shaders\ChatLookDevShaderABI.hlsli" Outputs="$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso">
+    <MakeDir Directories="$(CompiledShaderDir)" />
+    <Error Condition="!Exists('$(DxcExe)')" Text="DXC was not found at $(DxcExe). Restore NuGet packages first." />
+    <PropertyGroup>
+      <DxcCommon>-HV 2021 -I &quot;$(ProjectDir)Shaders&quot;</DxcCommon>
+      <DxcDebug Condition="'$(Configuration)'=='Debug'">-Zi -Qembed_debug -Od</DxcDebug>
+      <DxcDebug Condition="'$(Configuration)'!='Debug'">-O3</DxcDebug>
+    </PropertyGroup>
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E VSMain -T vs_6_9 -Fo &quot;$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\LookDevPBR.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E PSMain -T ps_6_9 -Fo &quot;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso&quot; &quot;$(ProjectDir)Shaders\LookDevPBR.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E VSMain -T vs_6_9 -Fo &quot;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\Sky.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E PSMain -T ps_6_9 -Fo &quot;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso&quot; &quot;$(ProjectDir)Shaders\Sky.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E CSMain -T cs_6_9 -Fo &quot;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso&quot; &quot;$(ProjectDir)Shaders\IblPrecompute.hlsl&quot;" />
+  </Target>
+  <Target Name="CopyAgilitySdk" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)D3D12" />
+    <Error Condition="!Exists('$(AgilitySdkBinDir)D3D12Core.dll')" Text="D3D12 Agility SDK DLLs were not found at $(AgilitySdkBinDir). Restore NuGet packages first." />
+    <Copy SourceFiles="$(AgilitySdkBinDir)D3D12Core.dll;$(AgilitySdkBinDir)d3d12SDKLayers.dll" DestinationFolder="$(OutDir)D3D12\" SkipUnchangedFiles="true" />
+  </Target>
+</Project>
