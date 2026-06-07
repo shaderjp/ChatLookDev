@@ -9,7 +9,7 @@ This document describes how ChatLookDev connects an in-process llama.cpp runtime
 ChatLookDev keeps the LLM runtime and the UI deliberately separate.
 
 - `ChatLookDevApp` owns ImGui, project state, renderer-facing state, chat transcript, and AI action history.
-- `LocalLlmService` owns llama.cpp model/context/sampler lifetime and runs model load/generation on a worker thread.
+- `LocalLlmService` owns llama.cpp model/context lifetime and runs model load/generation on a worker thread. Sampler chains are created per generation so grammar state does not leak across replies.
 - The worker thread never touches ImGui, D3D12 renderer state, or project data directly.
 - Communication back to the UI uses a mutex-protected `std::deque<LocalLlmEvent>`.
 
@@ -20,9 +20,9 @@ The main loop calls `DrainLlmEvents()` before drawing the UI each frame. That ke
 `DrawAiChatPanel()` renders the AI Chat panel:
 
 - Model controls: browse GGUF, load model, cancel generation, unload model.
-- Runtime controls: context tokens, max reply tokens, CPU threads, GPU layers, structured JSON, temperature, top-p.
+- Runtime controls: context tokens, max reply tokens, CPU threads, GPU layers, structured JSON, temperature, top-p, and the current CPU/GPU inference mode.
 - Transcript: user, assistant, and system messages.
-- Prompt input: `InputTextMultiline`, with `Send` and `Clear` buttons.
+- Prompt input: `InputTextMultiline`, with `Send` and `Clear` buttons. `Ctrl+Enter` also sends while the input field is active.
 - Action History: latest AI exchanges, raw response, extracted JSON, action results, token counts, timing, and finish reason.
 
 When the user presses `Send`, `SendChatPrompt()` trims the input, builds messages with `BuildLlmMessages()`, submits them to `LocalLlmService::Submit()`, appends the user message to the transcript, and stores the prompt in `m_pendingUserPrompt` so the eventual response can be logged as one exchange.
@@ -36,16 +36,16 @@ When the user presses `Send`, `SendChatPrompt()` trims the input, builds message
 - `LoadAsync(config)` stops any existing model, validates the GGUF path, and starts `LoadWorker`.
 - `Submit(messages)` starts `GenerateWorker` only when the service is `Ready`.
 - `CancelGeneration()` requests the current generation loop to stop while keeping the loaded model.
-- `Stop()` joins the worker, releases model/context/sampler, and moves to `Stopped`.
+- `Stop()` joins the worker, releases model/context, and moves to `Stopped`.
 - `DrainEvents()` returns and clears queued status/response/error events.
 
 `LoadWorker()` creates:
 
 - `llama_model` from the configured GGUF path.
 - `llama_context` with configured context size and CPU thread count.
-- `llama_sampler` chain, optionally with structured JSON grammar.
+- a short-lived sampler probe to verify that the requested sampler/grammar configuration can initialize.
 
-`Generate()` clears context memory, applies the model chat template, tokenizes the prompt, decodes prompt tokens, then samples up to `maxTokens`. The response event includes:
+`Generate()` creates a fresh `llama_sampler` chain, clears context memory, applies the model chat template, tokenizes the prompt, decodes prompt tokens, then samples up to `maxTokens`. The response event includes:
 
 - raw generated text
 - prompt token count
@@ -103,7 +103,7 @@ This two-pass flow prevents partial state changes. If any action is malformed or
 
 The integration follows a strict ownership rule:
 
-- Worker thread: llama.cpp model/context/sampler and event production.
+- Worker thread: llama.cpp model/context, per-generation sampler chain, and event production.
 - UI thread: ImGui, project state, renderer state, chat transcript, and action application.
 
 The worker thread communicates only through `LocalLlmEvent`. `m_stopRequested` is atomic, and event/status/model pointers are protected by `m_mutex`.

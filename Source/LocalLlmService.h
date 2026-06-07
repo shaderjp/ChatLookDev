@@ -26,7 +26,7 @@ struct LocalLlmConfig
     std::filesystem::path modelPath;
     int contextTokens = 4096;
     int maxTokens = 512;
-    int gpuLayers = 0;
+    int gpuLayers = 1;
     int threads = 1;
     float temperature = 0.7f;
     float topP = 0.9f;
@@ -69,7 +69,10 @@ struct LocalLlmStatus
     std::string lastError;
     std::filesystem::path modelPath;
     int contextTokens = 0;
-    int gpuLayers = 0;
+    int gpuLayers = 1;
+    std::string inferenceMode = "CPU";
+    std::string inferenceDevice;
+    bool gpuOffloadAvailable = false;
 };
 
 class LocalLlmService
@@ -125,7 +128,6 @@ private:
 
     llama_model* m_model = nullptr;
     llama_context* m_context = nullptr;
-    llama_sampler* m_sampler = nullptr;
     std::thread m_worker;
     std::atomic<bool> m_stopRequested = false;
 };

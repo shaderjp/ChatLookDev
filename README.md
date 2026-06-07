@@ -20,9 +20,9 @@ This repository is a sample being built with Codex and vibe coding. It is meant 
 - Sun + IBL physical-style controls: sun illuminance in lux, exposure EV, HDRI intensity multiplier.
 - ImGui docking panels: Viewport, Scene, Material, Lighting, AI Chat, Diagnostics / Stats.
 - Model transform controls through ImGui and the AI action system.
-- llama.cpp in-process local LLM service, CPU-only by default.
+- llama.cpp in-process local LLM service, CPU-only by default with optional CUDA or Vulkan backend builds.
 
-Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tracing, Vulkan, and mesh shader experiments are intentionally out of v1.
+Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tracing, Vulkan rendering, and mesh shader experiments are intentionally out of v1.
 
 ## Requirements
 
@@ -31,6 +31,7 @@ Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tr
 - Windows SDK `10.0.26100.0`.
 - CMake for Assimp and llama.cpp dependency builds.
 - Optional: CUDA Toolkit only when building with `/p:LlamaCuda=ON`.
+- Optional: Vulkan SDK only when building the llama.cpp Vulkan backend with `/p:LlamaVulkan=ON`.
 
 ## Build
 
@@ -45,6 +46,14 @@ The default LLM build is CPU-only. To request CUDA explicitly:
 ```
 
 `LlamaCuda=ON` fails early if `nvcc` is not found.
+
+To request the llama.cpp Vulkan backend explicitly:
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\amd64\MSBuild.exe" .\ChatLookDev.sln /m /p:Configuration=Release /p:Platform=x64 /p:LlamaVulkan=ON
+```
+
+`LlamaVulkan=ON` requires `VULKAN_SDK` to point at a Vulkan SDK installation containing `Bin/glslc.exe`, `Lib/vulkan-1.lib`, and `Include/vulkan/vulkan.h`.
 
 ## Model Path
 

@@ -1,10 +1,12 @@
 #include "LocalLlmService.h"
 
+#include <ggml-backend.h>
 #include <llama.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 
@@ -27,6 +29,56 @@ std::string StateName(cld::LocalLlmState state)
     case cld::LocalLlmState::Stopped:
     default: return "Stopped";
     }
+}
+
+std::string FirstGpuDeviceDescription()
+{
+    for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i)
+    {
+        ggml_backend_dev_t device = ggml_backend_dev_get(i);
+        if (!device)
+        {
+            continue;
+        }
+        const enum ggml_backend_dev_type type = ggml_backend_dev_type(device);
+        if (type == GGML_BACKEND_DEVICE_TYPE_GPU || type == GGML_BACKEND_DEVICE_TYPE_IGPU)
+        {
+            const char* name = ggml_backend_dev_name(device);
+            const char* description = ggml_backend_dev_description(device);
+            std::string text = name && name[0] ? name : "GPU";
+            if (description && description[0])
+            {
+                text += " - ";
+                text += description;
+            }
+            return text;
+        }
+    }
+    return {};
+}
+
+std::string InferenceModeText(const cld::LocalLlmConfig& config, bool gpuAvailable, const std::string& gpuDevice)
+{
+    if (config.gpuLayers > 0 && gpuAvailable)
+    {
+        std::ostringstream text;
+        text << "GPU offload (" << config.gpuLayers << " layer";
+        if (config.gpuLayers != 1)
+        {
+            text << "s";
+        }
+        if (!gpuDevice.empty())
+        {
+            text << ", " << gpuDevice;
+        }
+        text << ")";
+        return text.str();
+    }
+    if (config.gpuLayers > 0)
+    {
+        return "CPU (GPU offload unavailable; requested layers > 0)";
+    }
+    return "CPU";
 }
 
 void FillBatch(llama_batch& batch, const std::vector<int>& tokens, int startPos, bool logitsLast)
@@ -124,11 +176,6 @@ void LocalLlmService::JoinWorker()
 
 void LocalLlmService::ReleaseModel()
 {
-    if (m_sampler)
-    {
-        llama_sampler_free(m_sampler);
-        m_sampler = nullptr;
-    }
     if (m_context)
     {
         llama_free(m_context);
@@ -176,20 +223,20 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
 
         std::string samplerDiagnostics;
         bool usedGrammar = false;
-        llama_sampler* sampler = CreateSamplerChain(model, config, samplerDiagnostics, usedGrammar);
-        if (!sampler)
+        llama_sampler* samplerProbe = CreateSamplerChain(model, config, samplerDiagnostics, usedGrammar);
+        if (!samplerProbe)
         {
             llama_free(context);
             llama_model_free(model);
             throw std::runtime_error("llama sampler initialization failed.");
         }
+        llama_sampler_free(samplerProbe);
 
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             ReleaseModel();
             m_model = model;
             m_context = context;
-            m_sampler = sampler;
             m_config = config;
             m_structuredGrammarActive = usedGrammar;
             m_samplerDiagnostics = samplerDiagnostics;
@@ -197,6 +244,7 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
         }
         SetState(LocalLlmState::Ready, "Ready");
         PushEvent(LocalLlmEvent::Kind::Status, "Local model ready.");
+        PushEvent(LocalLlmEvent::Kind::Status, "Inference mode: " + InferenceModeText(config, llama_supports_gpu_offload(), FirstGpuDeviceDescription()));
         if (!samplerDiagnostics.empty())
         {
             PushEvent(LocalLlmEvent::Kind::Status, samplerDiagnostics);
@@ -359,28 +407,31 @@ LocalLlmService::GenerationResult LocalLlmService::Generate(const std::vector<Lo
 {
     llama_model* model = nullptr;
     llama_context* context = nullptr;
-    llama_sampler* sampler = nullptr;
     LocalLlmConfig config;
-    bool grammarActive = false;
-    std::string samplerDiagnostics;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         model = m_model;
         context = m_context;
-        sampler = m_sampler;
         config = m_config;
-        grammarActive = m_structuredGrammarActive;
-        samplerDiagnostics = m_samplerDiagnostics;
     }
-    if (!model || !context || !sampler)
+    if (!model || !context)
     {
         throw std::runtime_error("Model is not loaded.");
     }
 
     const auto generationStart = std::chrono::steady_clock::now();
     GenerationResult result;
+    std::string samplerDiagnostics;
+    bool grammarActive = false;
+    std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
+        CreateSamplerChain(model, config, samplerDiagnostics, grammarActive),
+        &llama_sampler_free);
+    if (!sampler)
+    {
+        throw std::runtime_error("llama sampler initialization failed.");
+    }
+
     llama_memory_clear(llama_get_memory(context), true);
-    llama_sampler_reset(sampler);
     const std::string prompt = ApplyChatTemplate(messages);
     std::vector<int> promptTokens = Tokenize(prompt, true, true);
     result.promptTokens = static_cast<int>(promptTokens.size());
@@ -407,11 +458,10 @@ LocalLlmService::GenerationResult LocalLlmService::Generate(const std::vector<Lo
 
     int position = static_cast<int>(promptTokens.size());
     result.finishReason = "max_tokens";
+    const llama_vocab* vocab = llama_model_get_vocab(model);
     for (int i = 0; i < std::max(1, config.maxTokens) && !m_stopRequested; ++i)
     {
-        const int token = llama_sampler_sample(sampler, context, -1);
-        llama_sampler_accept(sampler, token);
-        const llama_vocab* vocab = llama_model_get_vocab(model);
+        const int token = llama_sampler_sample(sampler.get(), context, -1);
         if (llama_vocab_is_eog(vocab, token))
         {
             result.finishReason = "eog";
@@ -458,6 +508,9 @@ LocalLlmStatus LocalLlmService::Status() const
     status.modelPath = m_config.modelPath;
     status.contextTokens = m_config.contextTokens;
     status.gpuLayers = m_config.gpuLayers;
+    status.gpuOffloadAvailable = llama_supports_gpu_offload();
+    status.inferenceDevice = FirstGpuDeviceDescription();
+    status.inferenceMode = InferenceModeText(m_config, status.gpuOffloadAvailable, status.inferenceDevice);
     return status;
 }
 

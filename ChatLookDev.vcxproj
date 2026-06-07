@@ -52,8 +52,11 @@
     <DirectXTexProject>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex_Desktop_2026.vcxproj</DirectXTexProject>
     <DirectXTexLibDir>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\Bin\Desktop_2026\x64\$(Configuration)</DirectXTexLibDir>
     <LlamaCppRoot>$(ProjectDir)ThirdParty\llama.cpp</LlamaCppRoot>
-    <LlamaCppBuildRoot>$(LlamaCppRoot)\Build\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
     <LlamaCuda Condition="'$(LlamaCuda)'==''">OFF</LlamaCuda>
+    <LlamaVulkan Condition="'$(LlamaVulkan)'==''">OFF</LlamaVulkan>
+    <LlamaCppBuildRoot>$(LlamaCppRoot)\Build\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
+    <LlamaCppBuildRoot Condition="'$(LlamaVulkan)'=='ON'">$(ProjectDir)Obj\LlamaVulkan\$(Platform)\$(Configuration)</LlamaCppBuildRoot>
+    <VulkanSdkLibDir Condition="'$(VulkanSdkLibDir)'==''">$(VULKAN_SDK)\Lib</VulkanSdkLibDir>
     <NuGetPackageRoot Condition="'$(NuGetPackageRoot)'==''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
     <AgilitySdkBinDir>$(NuGetPackageRoot)microsoft.direct3d.d3d12\1.619.3\build\native\bin\x64\</AgilitySdkBinDir>
     <DxcExe>$(NuGetPackageRoot)microsoft.direct3d.dxc\1.9.2602.17\build\native\bin\x64\dxc.exe</DxcExe>
@@ -75,8 +78,10 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(LlamaCuda)'=='ON'">ggml-cuda.lib;cuda.lib;cudart.lib;cublas.lib;cublasLt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(LlamaVulkan)'=='ON'">ggml-vulkan.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalLibraryDirectories Condition="'$(LlamaCuda)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-cuda\$(Configuration);$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories Condition="'$(LlamaVulkan)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-vulkan\$(Configuration);$(VulkanSdkLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
     </Link>
   </ItemDefinitionGroup>
@@ -100,8 +105,10 @@
       <OptimizeReferences>true</OptimizeReferences>
       <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(LlamaCuda)'=='ON'">ggml-cuda.lib;cuda.lib;cudart.lib;cublas.lib;cublasLt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(LlamaVulkan)'=='ON'">ggml-vulkan.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalLibraryDirectories Condition="'$(LlamaCuda)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-cuda\$(Configuration);$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories Condition="'$(LlamaVulkan)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-vulkan\$(Configuration);$(VulkanSdkLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
     </Link>
   </ItemDefinitionGroup>
@@ -151,9 +158,12 @@
     <Error Condition="!Exists('$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex.h')" Text="ThirdParty\DirectXTex is missing. Run git submodule update --init --recursive." />
     <Error Condition="!Exists('$(ProjectDir)ThirdParty\assimp\include\assimp\Importer.hpp')" Text="ThirdParty\assimp is missing. Run git submodule update --init --recursive." />
     <Error Condition="!Exists('$(ProjectDir)ThirdParty\llama.cpp\CMakeLists.txt')" Text="ThirdParty\llama.cpp is missing. Run git submodule update --init --recursive." />
+    <Error Condition="'$(LlamaVulkan)'=='ON' and !Exists('$(VULKAN_SDK)\Bin\glslc.exe')" Text="LlamaVulkan=ON requires Vulkan SDK with glslc.exe. Install Vulkan SDK or build with /p:LlamaVulkan=OFF." />
+    <Error Condition="'$(LlamaVulkan)'=='ON' and !Exists('$(VULKAN_SDK)\Lib\vulkan-1.lib')" Text="LlamaVulkan=ON requires Vulkan SDK vulkan-1.lib. Install Vulkan SDK or build with /p:LlamaVulkan=OFF." />
+    <Error Condition="'$(LlamaVulkan)'=='ON' and !Exists('$(VULKAN_SDK)\Include\vulkan\vulkan.h')" Text="LlamaVulkan=ON requires Vulkan SDK headers. Install Vulkan SDK or build with /p:LlamaVulkan=OFF." />
   </Target>
   <Target Name="BuildThirdParty" BeforeTargets="ClCompile">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -LlamaCppRoot &quot;$(LlamaCppRoot)&quot; -LlamaCppBuildRoot &quot;$(LlamaCppBuildRoot)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -LlamaCuda &quot;$(LlamaCuda)&quot;" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -LlamaCppRoot &quot;$(LlamaCppRoot)&quot; -LlamaCppBuildRoot &quot;$(LlamaCppBuildRoot)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -LlamaCuda &quot;$(LlamaCuda)&quot; -LlamaVulkan &quot;$(LlamaVulkan)&quot;" />
   </Target>
   <Target Name="CompileShaders" BeforeTargets="ClCompile" Inputs="Shaders\LookDevPBR.hlsl;Shaders\Sky.hlsl;Shaders\IblPrecompute.hlsl;Shaders\ChatLookDevShaderABI.hlsli" Outputs="$(CompiledShaderDir)LookDevPBR.VSMain.vs_6_9.cso;$(CompiledShaderDir)LookDevPBR.PSMain.ps_6_9.cso;$(CompiledShaderDir)Sky.VSMain.vs_6_9.cso;$(CompiledShaderDir)Sky.PSMain.ps_6_9.cso;$(CompiledShaderDir)IblPrecompute.CSMain.cs_6_9.cso">
     <MakeDir Directories="$(CompiledShaderDir)" />

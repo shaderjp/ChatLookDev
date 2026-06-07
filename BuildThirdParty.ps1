@@ -11,7 +11,8 @@ param(
     [Parameter(Mandatory = $true)][string]$LlamaCppBuildRoot,
     [Parameter(Mandatory = $true)][string]$MSBuildPath,
     [Parameter(Mandatory = $true)][string]$Configuration,
-    [ValidateSet('ON', 'OFF')][string]$LlamaCuda = 'OFF'
+    [ValidateSet('ON', 'OFF')][string]$LlamaCuda = 'OFF',
+    [ValidateSet('ON', 'OFF')][string]$LlamaVulkan = 'OFF'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +42,18 @@ function Test-CudaToolkit {
         }
     }
     return [bool](Get-Command nvcc -ErrorAction SilentlyContinue)
+}
+
+function Test-VulkanSdk {
+    if ($env:VULKAN_SDK) {
+        $glslcPath = Join-Path $env:VULKAN_SDK 'Bin\glslc.exe'
+        $libraryPath = Join-Path $env:VULKAN_SDK 'Lib\vulkan-1.lib'
+        $headerPath = Join-Path $env:VULKAN_SDK 'Include\vulkan\vulkan.h'
+        if ((Test-Path $glslcPath) -and (Test-Path $libraryPath) -and (Test-Path $headerPath)) {
+            return $true
+        }
+    }
+    return [bool](Get-Command glslc -ErrorAction SilentlyContinue)
 }
 
 function Get-CMakeBool {
@@ -92,7 +105,12 @@ $cudaToolkitAvailable = Test-CudaToolkit
 if ($LlamaCuda -eq 'ON' -and !$cudaToolkitAvailable) {
     throw 'LlamaCuda=ON was requested, but CUDA Toolkit nvcc was not found. Install CUDA Toolkit or build with /p:LlamaCuda=OFF.'
 }
+$vulkanSdkAvailable = Test-VulkanSdk
+if ($LlamaVulkan -eq 'ON' -and !$vulkanSdkAvailable) {
+    throw 'LlamaVulkan=ON was requested, but Vulkan SDK glslc, vulkan-1.lib, or vulkan.h was not found. Install Vulkan SDK or build with /p:LlamaVulkan=OFF.'
+}
 $llamaCudaCmake = if ($LlamaCuda -eq 'ON') { 'ON' } else { 'OFF' }
+$llamaVulkanCmake = if ($LlamaVulkan -eq 'ON') { 'ON' } else { 'OFF' }
 $cmakeGeneratorArgs = Get-CMakeGeneratorArgs
 
 Invoke-WithMutex -Name "Local\ChatLookDev-DirectXTex-$Configuration" -Body {
@@ -141,15 +159,16 @@ Invoke-WithMutex -Name "Local\ChatLookDev-Assimp-$Configuration" -Body {
     }
 }
 
-Invoke-WithMutex -Name "Local\ChatLookDev-LlamaCpp-$Configuration-$LlamaCuda" -Body {
+Invoke-WithMutex -Name "Local\ChatLookDev-LlamaCpp-$Configuration-$LlamaCuda-$LlamaVulkan" -Body {
     $cachePath = Join-Path $LlamaCppBuildRoot 'CMakeCache.txt'
     $llamaLib = Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'src') $Configuration) 'llama.lib'
     $ggmlLib = Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'ggml\src') $Configuration) 'ggml.lib'
     $currentCuda = Get-CMakeBool -CachePath $cachePath -Name 'GGML_CUDA'
-    $configureLlama = !(Test-Path $cachePath) -or ($currentCuda -ne $llamaCudaCmake)
+    $currentVulkan = Get-CMakeBool -CachePath $cachePath -Name 'GGML_VULKAN'
+    $configureLlama = !(Test-Path $cachePath) -or ($currentCuda -ne $llamaCudaCmake) -or ($currentVulkan -ne $llamaVulkanCmake)
 
     if ($configureLlama) {
-        Write-Host "Configuring llama.cpp GGML_CUDA=$llamaCudaCmake (LlamaCuda=$LlamaCuda, CUDA toolkit detected=$cudaToolkitAvailable)"
+        Write-Host "Configuring llama.cpp GGML_CUDA=$llamaCudaCmake GGML_VULKAN=$llamaVulkanCmake (LlamaCuda=$LlamaCuda, CUDA toolkit detected=$cudaToolkitAvailable, LlamaVulkan=$LlamaVulkan, Vulkan SDK detected=$vulkanSdkAvailable)"
         $llamaConfigureArgs = @(
             '-S', $LlamaCppRoot,
             '-B', $LlamaCppBuildRoot
@@ -161,7 +180,8 @@ Invoke-WithMutex -Name "Local\ChatLookDev-LlamaCpp-$Configuration-$LlamaCuda" -B
             '-DLLAMA_BUILD_EXAMPLES=OFF',
             '-DLLAMA_BUILD_SERVER=OFF',
             '-DLLAMA_BUILD_APP=OFF',
-            "-DGGML_CUDA=$llamaCudaCmake"
+            "-DGGML_CUDA=$llamaCudaCmake",
+            "-DGGML_VULKAN=$llamaVulkanCmake"
         )
         cmake @llamaConfigureArgs
         if ($LASTEXITCODE -ne 0) {

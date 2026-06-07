@@ -42,6 +42,8 @@ constexpr const char* TextureSlotJsonNames[] =
 };
 
 constexpr std::size_t TextureSlotCount = static_cast<std::size_t>(rb::TextureSlot::Count);
+constexpr float RadToDeg = 57.2957795f;
+constexpr float DegToRad = 0.0174532925f;
 
 std::string WideToUtf8(const std::wstring& text)
 {
@@ -596,7 +598,7 @@ void ChatLookDevApp::InitializeDefaults()
     m_llmConfig.modelPath = m_rootDirectory / "Assets" / "Models" / "gemma-4-E4B-it" / "gemma-4-E4B-it-Q4_K_M.gguf";
     m_llmConfig.contextTokens = 4096;
     m_llmConfig.maxTokens = 512;
-    m_llmConfig.gpuLayers = 0;
+    m_llmConfig.gpuLayers = 1;
     m_llmConfig.threads = 1;
     m_llmConfig.temperature = 0.2f;
     m_llmConfig.topP = 0.9f;
@@ -906,6 +908,34 @@ void ChatLookDevApp::DrawScenePanel()
         MarkProjectDirty();
     }
 
+    ImGui::Separator();
+    ImGui::TextUnformatted("Camera");
+    rb::ViewportCamera camera = m_backend.CameraState();
+    float yawDegrees = camera.yaw * RadToDeg;
+    float pitchDegrees = camera.pitch * RadToDeg;
+    bool cameraChanged = false;
+    cameraChanged |= ImGui::DragFloat3("Target", camera.target.data(), 0.01f, -1000000.0f, 1000000.0f, "%.3f");
+    cameraChanged |= ImGui::DragFloat("Yaw deg", &yawDegrees, 0.1f, -36000.0f, 36000.0f, "%.2f");
+    cameraChanged |= ImGui::DragFloat("Pitch deg", &pitchDegrees, 0.1f, -88.81f, 88.81f, "%.2f");
+    cameraChanged |= ImGui::DragFloat("Distance", &camera.distance, 0.05f, 0.001f, 10000000.0f, "%.3f");
+    if (cameraChanged)
+    {
+        camera.yaw = yawDegrees * DegToRad;
+        camera.pitch = std::clamp(pitchDegrees * DegToRad, -1.55f, 1.55f);
+        camera.distance = std::max(camera.distance, 0.001f);
+        m_backend.SetCameraState(camera);
+        m_project.viewportCamera = m_backend.CameraState();
+        m_project.hasViewportCamera = true;
+        MarkProjectDirty();
+    }
+    if (ImGui::Button("Frame Scene"))
+    {
+        m_backend.ResetCameraToScene();
+        m_project.viewportCamera = m_backend.CameraState();
+        m_project.hasViewportCamera = true;
+        MarkProjectDirty();
+    }
+
     const RendererStats stats = m_backend.Stats();
     ImGui::Separator();
     ImGui::Text("Vertices: %u", stats.vertexCount);
@@ -1102,6 +1132,7 @@ void ChatLookDevApp::DrawAiChatPanel()
     ImGui::Begin("AI Chat");
     const LocalLlmStatus status = m_llm.Status();
     ImGui::Text("State: %s", status.stateText.c_str());
+    ImGui::TextWrapped("Inference: %s", status.inferenceMode.c_str());
     if (!status.lastError.empty())
     {
         ImGui::TextWrapped("Error: %s", status.lastError.c_str());
@@ -1153,7 +1184,8 @@ void ChatLookDevApp::DrawAiChatPanel()
     }
 
     ImGui::Separator();
-    const float transcriptHeight = std::max(140.0f, ImGui::GetContentRegionAvail().y - 150.0f);
+    const float lowerPanelHeight = ImGui::GetContentRegionAvail().y;
+    const float transcriptHeight = std::clamp(lowerPanelHeight * 0.48f, 150.0f, 360.0f);
     ImGui::BeginChild("Transcript", ImVec2(0.0f, transcriptHeight), ImGuiChildFlags_Borders);
     ImGui::PushFont(ChatTextFont());
     for (const ChatMessage& message : m_chatMessages)
@@ -1171,11 +1203,15 @@ void ChatLookDevApp::DrawAiChatPanel()
     ImGui::EndChild();
 
     ImGui::PushFont(ChatTextFont());
-    ImGui::InputTextMultiline("##ChatInput", m_chatInput.data(), m_chatInput.size(), ImVec2(-1.0f, 80.0f));
+    ImGui::InputTextMultiline("##ChatInput", m_chatInput.data(), m_chatInput.size(), ImVec2(-1.0f, 64.0f));
+    const bool chatInputActive = ImGui::IsItemActive();
     ImGui::PopFont();
     const bool canSend = status.state == LocalLlmState::Ready && TrimAscii(m_chatInput.data()).size() > 0;
+    const bool ctrlEnterSend = chatInputActive
+        && ImGui::GetIO().KeyCtrl
+        && (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter));
     ImGui::BeginDisabled(!canSend);
-    if (ImGui::Button("Send"))
+    if (ImGui::Button("Send") || (canSend && ctrlEnterSend))
     {
         SendChatPrompt();
     }
@@ -1211,6 +1247,8 @@ void ChatLookDevApp::DrawActionHistoryPanel()
         return;
     }
 
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f));
     for (std::size_t offset = 0; offset < m_aiHistory.size(); ++offset)
     {
         const std::size_t index = m_aiHistory.size() - 1 - offset;
@@ -1219,9 +1257,12 @@ void ChatLookDevApp::DrawActionHistoryPanel()
         std::ostringstream label;
         label << "#" << (index + 1) << " "
               << (exchange.rejectedReason.empty() ? "Applied" : "Rejected")
-              << " (" << exchange.appliedCount << " actions, "
-              << exchange.outputTokens << " tokens, "
-              << std::fixed << std::setprecision(1) << exchange.elapsedMs << " ms)";
+              << " (" << exchange.appliedCount << " action";
+        if (exchange.appliedCount != 1)
+        {
+            label << "s";
+        }
+        label << ")";
         if (ImGui::TreeNode(label.str().c_str()))
         {
             ImGui::TextWrapped("User: %s", exchange.userPrompt.c_str());
@@ -1272,6 +1313,7 @@ void ChatLookDevApp::DrawActionHistoryPanel()
         }
         ImGui::PopID();
     }
+    ImGui::PopStyleVar(2);
 }
 
 void ChatLookDevApp::DrawDiagnosticsPanel()
@@ -1284,6 +1326,8 @@ void ChatLookDevApp::DrawDiagnosticsPanel()
     ImGui::Text("Frame Time: %.3f ms", stats.lastFrameMs);
     ImGui::Text("Viewport: %ux%u", stats.sceneWidth, stats.sceneHeight);
     ImGui::TextWrapped("Environment: %s", stats.environmentStatus.c_str());
+    const LocalLlmStatus llmStatus = m_llm.Status();
+    ImGui::TextWrapped("LLM Inference: %s", llmStatus.inferenceMode.c_str());
     ImGui::Separator();
     ImGui::TextWrapped("Root: %s", PathToUtf8(m_rootDirectory).c_str());
     if (!m_project.path.empty())
@@ -1843,7 +1887,7 @@ std::string ChatLookDevApp::BuildSystemPrompt() const
     prompt << "Allowed environment params: rotationYaw, intensity, backgroundMode(Sky Color/HDRI/Checker), skyTopColor, skyHorizonColor.\n";
     prompt << "Allowed sun params: sunDirection float3, sunColor float3, illuminanceLux.\n";
     prompt << "Allowed material params: materialName optional, baseColorFactor float4, emissiveFactor float4, roughnessFactor, metallicFactor, normalStrength, occlusionStrength, alphaMode(Opaque/Mask/Blend), alphaCutoff, packedOcclusionRoughnessMetallic, flipNormalGreen.\n";
-    prompt << "Allowed camera params: target float3, yaw, pitch, distance.\n";
+    prompt << "Allowed camera params: target float3, yaw/pitch radians, yawDegrees/pitchDegrees optional, distance.\n";
     prompt << "Examples:\n";
     prompt << "User: 露出を下げて -> {\"reply\":\"露出を下げました。\",\"actions\":[{\"method\":\"set_view_settings\",\"params\":{\"exposure\":-1.0}}]}\n";
     prompt << "User: 太陽を強くして -> {\"reply\":\"太陽光を強くしました。\",\"actions\":[{\"method\":\"set_sun_settings\",\"params\":{\"illuminanceLux\":50000}}]}\n";
@@ -2208,6 +2252,12 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
         if (!ReadOptionalFloat3(params, "target", -1000000.0f, 1000000.0f, camera.target, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "yaw", -1000.0f, 1000.0f, camera.yaw, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "pitch", -1.55f, 1.55f, camera.pitch, diagnostics)) return false;
+        float yawDegrees = camera.yaw * RadToDeg;
+        if (!ReadOptionalNumber(params, "yawDegrees", -36000.0f, 36000.0f, yawDegrees, diagnostics)) return false;
+        camera.yaw = yawDegrees * DegToRad;
+        float pitchDegrees = camera.pitch * RadToDeg;
+        if (!ReadOptionalNumber(params, "pitchDegrees", -88.81f, 88.81f, pitchDegrees, diagnostics)) return false;
+        camera.pitch = std::clamp(pitchDegrees * DegToRad, -1.55f, 1.55f);
         if (!ReadOptionalNumber(params, "distance", 0.001f, 10000000.0f, camera.distance, diagnostics)) return false;
         if (commit)
         {
