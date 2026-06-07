@@ -132,7 +132,7 @@ std::string HResultMessage(HRESULT hr)
     return message.str();
 }
 
-bool LoadJapaneseImGuiFont(ImGuiIO& io)
+ImFont* AddJapaneseImGuiFont(ImGuiIO& io, float sizePixels)
 {
     const char* fontCandidates[] =
     {
@@ -152,12 +152,22 @@ bool LoadJapaneseImGuiFont(ImGuiIO& io)
         {
             continue;
         }
-        if (io.Fonts->AddFontFromFileTTF(fontPath, 16.0f, &fontConfig, glyphRanges) != nullptr)
+        ImFont* font = io.Fonts->AddFontFromFileTTF(fontPath, sizePixels, &fontConfig, glyphRanges);
+        if (font != nullptr)
         {
-            return true;
+            return font;
         }
     }
-    return io.Fonts->AddFontDefault() != nullptr;
+
+    fontConfig.SizePixels = sizePixels;
+    return io.Fonts->AddFontDefault(&fontConfig);
+}
+
+bool LoadJapaneseImGuiFonts(ImGuiIO& io)
+{
+    ImFont* uiFont = AddJapaneseImGuiFont(io, 16.0f);
+    ImFont* chatFont = AddJapaneseImGuiFont(io, 20.0f);
+    return uiFont != nullptr && chatFont != nullptr;
 }
 
 std::wstring SceneTexturePath(const rb::SceneMaterial& material, std::size_t textureSlot)
@@ -1241,6 +1251,11 @@ void D3D12Backend::SetDebugViewMode(rb::LookDevDisplayMode displayMode)
     m_lookDevConstants.viewOptions.w = static_cast<float>(displayMode);
 }
 
+void D3D12Backend::SetModelTransform(const rb::ModelTransform& transform)
+{
+    m_modelTransform = transform;
+}
+
 bool D3D12Backend::Resize(UINT width, UINT height)
 {
     if (!m_swapChain || width == 0 || height == 0)
@@ -1290,7 +1305,7 @@ void D3D12Backend::UpdateConstants(float deltaSeconds)
     const XMVECTOR eye = target + offset;
     const XMMATRIX view = XMMatrixLookAtLH(eye, target, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
     const XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(45.0f), aspect, 0.01f, 100000.0f);
-    const XMMATRIX model = XMMatrixIdentity();
+    const XMMATRIX model = ModelMatrix();
     const XMMATRIX viewProjection = view * projection;
     XMStoreFloat4x4(&m_sceneConstants.modelViewProjection, XMMatrixTranspose(model * viewProjection));
     XMStoreFloat4x4(&m_sceneConstants.model, XMMatrixTranspose(model));
@@ -1423,7 +1438,7 @@ void D3D12Backend::InitializeImGui(HWND hwnd)
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    LoadJapaneseImGuiFont(io);
+    LoadJapaneseImGuiFonts(io);
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX12_InitInfo initInfo;
@@ -1494,19 +1509,69 @@ void D3D12Backend::MoveToNextFrame()
 
 float D3D12Backend::SceneRadius() const
 {
-    const XMVECTOR minBounds = XMLoadFloat3(&m_boundsMin);
-    const XMVECTOR maxBounds = XMLoadFloat3(&m_boundsMax);
+    XMFLOAT3 boundsMin;
+    XMFLOAT3 boundsMax;
+    TransformedSceneBounds(boundsMin, boundsMax);
+    const XMVECTOR minBounds = XMLoadFloat3(&boundsMin);
+    const XMVECTOR maxBounds = XMLoadFloat3(&boundsMax);
     return std::max(0.5f, XMVectorGetX(XMVector3Length(maxBounds - minBounds)) * 0.5f);
 }
 
 void D3D12Backend::ResetCameraToScene()
 {
+    XMFLOAT3 boundsMin;
+    XMFLOAT3 boundsMax;
+    TransformedSceneBounds(boundsMin, boundsMax);
     m_cameraTarget = XMFLOAT3(
-        (m_boundsMin.x + m_boundsMax.x) * 0.5f,
-        (m_boundsMin.y + m_boundsMax.y) * 0.5f,
-        (m_boundsMin.z + m_boundsMax.z) * 0.5f);
+        (boundsMin.x + boundsMax.x) * 0.5f,
+        (boundsMin.y + boundsMax.y) * 0.5f,
+        (boundsMin.z + boundsMax.z) * 0.5f);
     m_cameraDistance = SceneRadius() * 2.8f;
     m_cameraMoveScale = SceneRadius();
+}
+
+XMMATRIX D3D12Backend::ModelMatrix() const
+{
+    const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(
+        XMConvertToRadians(m_modelTransform.rotationDegrees[0]),
+        XMConvertToRadians(m_modelTransform.rotationDegrees[1]),
+        XMConvertToRadians(m_modelTransform.rotationDegrees[2]));
+    const XMMATRIX translation = XMMatrixTranslation(
+        m_modelTransform.translation[0],
+        m_modelTransform.translation[1],
+        m_modelTransform.translation[2]);
+    return rotation * translation;
+}
+
+void D3D12Backend::TransformedSceneBounds(XMFLOAT3& boundsMin, XMFLOAT3& boundsMax) const
+{
+    const XMMATRIX model = ModelMatrix();
+    const XMFLOAT3 corners[] =
+    {
+        XMFLOAT3(m_boundsMin.x, m_boundsMin.y, m_boundsMin.z),
+        XMFLOAT3(m_boundsMin.x, m_boundsMin.y, m_boundsMax.z),
+        XMFLOAT3(m_boundsMin.x, m_boundsMax.y, m_boundsMin.z),
+        XMFLOAT3(m_boundsMin.x, m_boundsMax.y, m_boundsMax.z),
+        XMFLOAT3(m_boundsMax.x, m_boundsMin.y, m_boundsMin.z),
+        XMFLOAT3(m_boundsMax.x, m_boundsMin.y, m_boundsMax.z),
+        XMFLOAT3(m_boundsMax.x, m_boundsMax.y, m_boundsMin.z),
+        XMFLOAT3(m_boundsMax.x, m_boundsMax.y, m_boundsMax.z),
+    };
+
+    XMFLOAT3 transformed;
+    XMStoreFloat3(&transformed, XMVector3Transform(XMLoadFloat3(&corners[0]), model));
+    boundsMin = transformed;
+    boundsMax = transformed;
+    for (std::size_t i = 1; i < _countof(corners); ++i)
+    {
+        XMStoreFloat3(&transformed, XMVector3Transform(XMLoadFloat3(&corners[i]), model));
+        boundsMin.x = std::min(boundsMin.x, transformed.x);
+        boundsMin.y = std::min(boundsMin.y, transformed.y);
+        boundsMin.z = std::min(boundsMin.z, transformed.z);
+        boundsMax.x = std::max(boundsMax.x, transformed.x);
+        boundsMax.y = std::max(boundsMax.y, transformed.y);
+        boundsMax.z = std::max(boundsMax.z, transformed.z);
+    }
 }
 
 rb::ViewportCamera D3D12Backend::CameraState() const

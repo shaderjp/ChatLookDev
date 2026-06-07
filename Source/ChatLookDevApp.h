@@ -63,6 +63,7 @@ private:
     bool LoadScenePath(const std::filesystem::path& path);
     bool LoadEnvironmentPath(const std::filesystem::path& path);
     void UsePreviewScene();
+    void ApplyModelTransform();
     void ApplyLookDevSettings();
     void ApplyMaterialAssignments();
     void ApplyImportedTextureOverrides(rb::ImportedScene& scene);

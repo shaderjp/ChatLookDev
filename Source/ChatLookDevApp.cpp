@@ -407,6 +407,77 @@ void NormalizeDirection(std::array<float, 3>& direction)
         direction[2] /= length;
     }
 }
+
+bool ExtractFirstJsonObject(const std::string& text, std::string& json)
+{
+    for (std::size_t start = 0; start < text.size(); ++start)
+    {
+        if (text[start] != '{')
+        {
+            continue;
+        }
+
+        int depth = 0;
+        bool inString = false;
+        bool escaped = false;
+        for (std::size_t i = start; i < text.size(); ++i)
+        {
+            const char ch = text[i];
+            if (inString)
+            {
+                if (escaped)
+                {
+                    escaped = false;
+                }
+                else if (ch == '\\')
+                {
+                    escaped = true;
+                }
+                else if (ch == '"')
+                {
+                    inString = false;
+                }
+                continue;
+            }
+
+            if (ch == '"')
+            {
+                inString = true;
+            }
+            else if (ch == '{')
+            {
+                ++depth;
+            }
+            else if (ch == '}')
+            {
+                --depth;
+                if (depth == 0)
+                {
+                    json = text.substr(start, i - start + 1);
+                    return true;
+                }
+                if (depth < 0)
+                {
+                    break;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+ImFont* ChatTextFont()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    return io.Fonts && io.Fonts->Fonts.Size > 1 ? io.Fonts->Fonts[1] : ImGui::GetFont();
+}
+
+void AddScaled(std::array<float, 3>& value, const std::array<float, 3>& direction, float scale)
+{
+    value[0] += direction[0] * scale;
+    value[1] += direction[1] * scale;
+    value[2] += direction[2] * scale;
+}
 }
 
 namespace cld
@@ -497,6 +568,7 @@ void ChatLookDevApp::Shutdown()
 void ChatLookDevApp::InitializeDefaults()
 {
     m_project.scenePath.clear();
+    m_project.modelTransform = {};
     m_project.skyTopColor = { 0.12f, 0.20f, 0.32f, 1.0f };
     m_project.skyHorizonColor = { 0.03f, 0.04f, 0.055f, 1.0f };
     m_project.lookDevEnvironment.sunIntensity = 10000.0f;
@@ -515,7 +587,7 @@ void ChatLookDevApp::InitializeDefaults()
     m_llmConfig.contextTokens = 4096;
     m_llmConfig.maxTokens = 512;
     m_llmConfig.gpuLayers = 0;
-    m_llmConfig.threads = 0;
+    m_llmConfig.threads = 1;
     m_llmConfig.temperature = 0.2f;
     m_llmConfig.topP = 0.9f;
     m_llmConfig.topK = 40;
@@ -677,34 +749,101 @@ void ChatLookDevApp::DrawViewportPanel()
 
 void ChatLookDevApp::HandleViewportInput(const ImVec2& imageMin, const ImVec2& imageMax)
 {
-    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mouse = io.MousePos;
     const bool hovered = mouse.x >= imageMin.x && mouse.y >= imageMin.y && mouse.x <= imageMax.x && mouse.y <= imageMax.y;
-    if (!hovered || ImGui::GetIO().WantCaptureKeyboard)
+    if (!hovered || io.WantCaptureKeyboard)
     {
         return;
     }
 
-    const ImVec2 delta = ImGui::GetIO().MouseDelta;
-    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    const rb::ViewportCamera camera = m_backend.CameraState();
+    const float moveScale = std::max(camera.distance, 0.5f) * io.DeltaTime * (io.KeyShift ? 2.0f : 0.65f) * (io.KeyCtrl ? 0.25f : 1.0f);
+    const std::array<float, 3> cameraRight = { std::cos(camera.yaw), 0.0f, -std::sin(camera.yaw) };
+    const std::array<float, 3> cameraForward = { -std::sin(camera.yaw), 0.0f, -std::cos(camera.yaw) };
+    const std::array<float, 3> worldUp = { 0.0f, 1.0f, 0.0f };
+
+    bool modelChanged = false;
+    if (ImGui::IsKeyDown(ImGuiKey_W))
+    {
+        AddScaled(m_project.modelTransform.translation, cameraForward, moveScale);
+        modelChanged = true;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_S))
+    {
+        AddScaled(m_project.modelTransform.translation, cameraForward, -moveScale);
+        modelChanged = true;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_D))
+    {
+        AddScaled(m_project.modelTransform.translation, cameraRight, moveScale);
+        modelChanged = true;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_A))
+    {
+        AddScaled(m_project.modelTransform.translation, cameraRight, -moveScale);
+        modelChanged = true;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_E))
+    {
+        AddScaled(m_project.modelTransform.translation, worldUp, moveScale);
+        modelChanged = true;
+    }
+    if (ImGui::IsKeyDown(ImGuiKey_Q))
+    {
+        AddScaled(m_project.modelTransform.translation, worldUp, -moveScale);
+        modelChanged = true;
+    }
+
+    const bool modelMouseMode = io.KeyShift;
+    const ImVec2 delta = io.MouseDelta;
+    if (modelMouseMode && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    {
+        m_project.modelTransform.rotationDegrees[1] += delta.x * 0.35f;
+        m_project.modelTransform.rotationDegrees[0] += delta.y * 0.35f;
+        modelChanged = true;
+    }
+    else if (ImGui::IsMouseDragging(ImGuiMouseButton_Left))
     {
         m_backend.OrbitCamera(delta.x * 0.006f, delta.y * 0.006f);
         m_project.viewportCamera = m_backend.CameraState();
         m_project.hasViewportCamera = true;
         MarkProjectDirty();
     }
-    if (ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+    if (modelMouseMode && ImGui::IsMouseDragging(ImGuiMouseButton_Right))
+    {
+        const float dragScale = std::max(camera.distance, 0.5f) * 0.0015f;
+        AddScaled(m_project.modelTransform.translation, cameraRight, delta.x * dragScale);
+        AddScaled(m_project.modelTransform.translation, worldUp, -delta.y * dragScale);
+        modelChanged = true;
+    }
+    else if (ImGui::IsMouseDragging(ImGuiMouseButton_Right))
     {
         m_backend.PanCamera(delta.x * 0.002f, delta.y * 0.002f);
         m_project.viewportCamera = m_backend.CameraState();
         m_project.hasViewportCamera = true;
         MarkProjectDirty();
     }
-    const float wheel = ImGui::GetIO().MouseWheel;
+    const float wheel = io.MouseWheel;
     if (std::abs(wheel) > 0.0f)
     {
-        m_backend.DollyCamera(wheel);
-        m_project.viewportCamera = m_backend.CameraState();
-        m_project.hasViewportCamera = true;
+        if (modelMouseMode)
+        {
+            AddScaled(m_project.modelTransform.translation, cameraForward, wheel * std::max(camera.distance, 0.5f) * 0.08f);
+            modelChanged = true;
+        }
+        else
+        {
+            m_backend.DollyCamera(wheel);
+            m_project.viewportCamera = m_backend.CameraState();
+            m_project.hasViewportCamera = true;
+            MarkProjectDirty();
+        }
+    }
+
+    if (modelChanged)
+    {
+        ApplyModelTransform();
         MarkProjectDirty();
     }
 }
@@ -736,6 +875,23 @@ void ChatLookDevApp::DrawScenePanel()
         m_backend.ResetCameraToScene();
         m_project.viewportCamera = m_backend.CameraState();
         m_project.hasViewportCamera = true;
+        MarkProjectDirty();
+    }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Model Transform");
+    bool transformChanged = false;
+    transformChanged |= ImGui::DragFloat3("Translation", m_project.modelTransform.translation.data(), 0.01f, -1000000.0f, 1000000.0f, "%.3f");
+    transformChanged |= ImGui::DragFloat3("Rotation deg", m_project.modelTransform.rotationDegrees.data(), 0.25f, -36000.0f, 36000.0f, "%.2f");
+    if (transformChanged)
+    {
+        ApplyModelTransform();
+        MarkProjectDirty();
+    }
+    if (ImGui::Button("Reset Transform"))
+    {
+        m_project.modelTransform = {};
+        ApplyModelTransform();
         MarkProjectDirty();
     }
 
@@ -978,6 +1134,7 @@ void ChatLookDevApp::DrawAiChatPanel()
     ImGui::Separator();
     const float transcriptHeight = std::max(140.0f, ImGui::GetContentRegionAvail().y - 150.0f);
     ImGui::BeginChild("Transcript", ImVec2(0.0f, transcriptHeight), ImGuiChildFlags_Borders);
+    ImGui::PushFont(ChatTextFont());
     for (const ChatMessage& message : m_chatMessages)
     {
         ImGui::TextColored(message.role == "assistant" ? ImVec4(0.45f, 0.75f, 1.0f, 1.0f) : ImVec4(0.95f, 0.95f, 0.95f, 1.0f), "%s", message.role.c_str());
@@ -989,9 +1146,12 @@ void ChatLookDevApp::DrawAiChatPanel()
         ImGui::SetScrollHereY(1.0f);
         m_scrollChatToBottom = false;
     }
+    ImGui::PopFont();
     ImGui::EndChild();
 
+    ImGui::PushFont(ChatTextFont());
     ImGui::InputTextMultiline("##ChatInput", m_chatInput.data(), m_chatInput.size(), ImVec2(-1.0f, 80.0f));
+    ImGui::PopFont();
     const bool canSend = status.state == LocalLlmState::Ready && TrimAscii(m_chatInput.data()).size() > 0;
     ImGui::BeginDisabled(!canSend);
     if (ImGui::Button("Send"))
@@ -1102,6 +1262,8 @@ bool ChatLookDevApp::LoadScenePath(const std::filesystem::path& path)
 
     m_importedScene = std::move(result.scene);
     m_project.scenePath = AbsoluteLexicalPath(path).wstring();
+    m_project.modelTransform = {};
+    ApplyModelTransform();
     m_project.materialAssignments.clear();
     for (const rb::SceneMaterial& material : m_importedScene.materials)
     {
@@ -1163,12 +1325,19 @@ void ChatLookDevApp::UsePreviewScene()
     m_backend.ResetPreviewScene();
     m_importedScene = {};
     m_project.scenePath.clear();
+    m_project.modelTransform = {};
+    ApplyModelTransform();
     m_project.materialAssignments.clear();
     m_project.materialAssignments.push_back(rb::MaterialAssignment{ "Default Material", "LookDev PBR" });
     m_selectedMaterial = 0;
     ApplyMaterialAssignments();
     m_sceneDiagnostics = "Using built-in preview cube.";
     MarkProjectDirty();
+}
+
+void ChatLookDevApp::ApplyModelTransform()
+{
+    m_backend.SetModelTransform(m_project.modelTransform);
 }
 
 void ChatLookDevApp::ApplyLookDevSettings()
@@ -1245,6 +1414,9 @@ bool ChatLookDevApp::SaveProjectToDisk(const std::filesystem::path& requestedPat
         json << "  \"version\": 1,\n";
         json << "  \"renderer\": \"D3D12\",\n";
         json << "  \"scenePath\": \"" << EscapeJson(ProjectPathString(m_project.scenePath, projectDirectory)) << "\",\n";
+        json << "  \"modelTransform\": { "
+             << "\"translation\": " << Float3Json(m_project.modelTransform.translation) << ", "
+             << "\"rotationDegrees\": " << Float3Json(m_project.modelTransform.rotationDegrees) << " },\n";
         json << "  \"skyTopColor\": " << Float4Json(m_project.skyTopColor) << ",\n";
         json << "  \"skyHorizonColor\": " << Float4Json(m_project.skyHorizonColor) << ",\n";
         json << "  \"camera\": { "
@@ -1354,6 +1526,23 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
         loadedProject.skyTopColor = JsonFloat4Or(root, "skyTopColor", loadedProject.skyTopColor);
         loadedProject.skyHorizonColor = JsonFloat4Or(root, "skyHorizonColor", loadedProject.skyHorizonColor);
 
+        if (const JsonValue* modelTransform = FindMember(root, "modelTransform"); modelTransform && modelTransform->type == JsonValue::Type::Object)
+        {
+            loadedProject.modelTransform.translation = JsonFloat3Or(*modelTransform, "translation", loadedProject.modelTransform.translation);
+            loadedProject.modelTransform.rotationDegrees = JsonFloat3Or(*modelTransform, "rotationDegrees", loadedProject.modelTransform.rotationDegrees);
+            if (const JsonValue* rotationRadians = FindMember(*modelTransform, "rotationRadians"); rotationRadians && rotationRadians->type == JsonValue::Type::Array && rotationRadians->array.size() >= 3)
+            {
+                const std::array<float, 3> zeroRadians = { 0.0f, 0.0f, 0.0f };
+                std::array<float, 3> radians = JsonFloat3Or(*modelTransform, "rotationRadians", zeroRadians);
+                loadedProject.modelTransform.rotationDegrees =
+                {
+                    radians[0] * 57.2957795f,
+                    radians[1] * 57.2957795f,
+                    radians[2] * 57.2957795f,
+                };
+            }
+        }
+
         if (const JsonValue* camera = FindMember(root, "camera"); camera && camera->type == JsonValue::Type::Object)
         {
             loadedProject.viewportCamera.target = JsonFloat3Or(*camera, "target", loadedProject.viewportCamera.target);
@@ -1437,7 +1626,10 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
         if (!m_project.scenePath.empty() && PathExists(m_project.scenePath))
         {
             std::vector<rb::MaterialAssignment> savedMaterials = m_project.materialAssignments;
+            const rb::ModelTransform savedModelTransform = m_project.modelTransform;
             LoadScenePath(m_project.scenePath);
+            m_project.modelTransform = savedModelTransform;
+            ApplyModelTransform();
             if (!savedMaterials.empty())
             {
                 m_project.materialAssignments = std::move(savedMaterials);
@@ -1447,6 +1639,8 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
         else
         {
             UsePreviewScene();
+            m_project.modelTransform = loadedProject.modelTransform;
+            ApplyModelTransform();
             m_project.path = path.wstring();
         }
 
@@ -1528,8 +1722,10 @@ std::string ChatLookDevApp::BuildSystemPrompt() const
 {
     std::ostringstream prompt;
     prompt << "You are a local LookDev assistant embedded in a Direct3D 12 PBR viewer.\n";
+    prompt << "Reply in the user's language inside the JSON reply field.\n";
     prompt << "Return only strict JSON, no markdown, no prose outside JSON.\n";
-    prompt << "Schema: {\"reply\":\"short user-facing reply\",\"actions\":[{\"method\":\"set_view_settings|set_environment_settings|set_sun_settings|set_material_preview|set_camera\",\"params\":{}}]}.\n";
+    prompt << "Schema: {\"reply\":\"short user-facing reply\",\"actions\":[{\"method\":\"set_view_settings|set_environment_settings|set_sun_settings|set_material_preview|set_camera|set_model_transform\",\"params\":{}}]}.\n";
+    prompt << "Allowed model transform params: translation float3 absolute, translationDelta float3 additive, rotationDegrees float3 absolute XYZ degrees, rotationDegreesDelta float3 additive XYZ degrees, rotationRadians float3 absolute, rotationRadiansDelta float3 additive, reset boolean.\n";
     prompt << "Allowed view params: exposure, gamma, toneMapper(None/Reinhard/ACES), displayMode(Beauty/Base Color/Normal/Roughness/Metallic/Ambient Occlusion/Emissive/Lighting Only), turntableEnabled, turntableSpeed.\n";
     prompt << "Allowed environment params: rotationYaw, intensity, backgroundMode(Sky Color/HDRI/Checker), skyTopColor, skyHorizonColor.\n";
     prompt << "Allowed sun params: sunDirection float3, sunColor float3, illuminanceLux.\n";
@@ -1548,6 +1744,7 @@ std::string ChatLookDevApp::BuildControlStateJson() const
     json << "{";
     json << "\"scenePath\":\"" << EscapeJson(PathToUtf8(m_project.scenePath)) << "\",";
     json << "\"selectedMaterial\":\"" << EscapeJson(selectedMaterial) << "\",";
+    json << "\"modelTransform\":{\"translation\":" << Float3Json(m_project.modelTransform.translation) << ",\"rotationDegrees\":" << Float3Json(m_project.modelTransform.rotationDegrees) << "},";
     json << "\"camera\":{\"target\":" << Float3Json(camera.target) << ",\"yaw\":" << camera.yaw << ",\"pitch\":" << camera.pitch << ",\"distance\":" << camera.distance << "},";
     json << "\"environment\":{\"hdriPath\":\"" << EscapeJson(PathToUtf8(m_project.lookDevEnvironment.environmentPath)) << "\",\"rotationYaw\":" << m_project.lookDevEnvironment.rotationYaw << ",\"intensity\":" << m_project.lookDevEnvironment.intensity << ",\"backgroundMode\":\"" << BackgroundModeName(m_project.lookDevEnvironment.backgroundMode) << "\",\"sunDirection\":" << Float3Json(m_project.lookDevEnvironment.sunDirection) << ",\"sunColor\":" << Float3Json(m_project.lookDevEnvironment.sunColor) << ",\"illuminanceLux\":" << m_project.lookDevEnvironment.sunIntensity << "},";
     json << "\"view\":{\"exposure\":" << m_project.lookDevViewSettings.exposure << ",\"gamma\":" << m_project.lookDevViewSettings.gamma << ",\"toneMapper\":\"" << ToneMapperName(m_project.lookDevViewSettings.toneMapper) << "\",\"displayMode\":\"" << DisplayModeName(m_project.lookDevViewSettings.displayMode) << "\"},";
@@ -1590,7 +1787,14 @@ void ChatLookDevApp::HandleLlmResponse(const std::string& text)
     try
     {
         const std::string trimmed = TrimAscii(text);
-        const JsonValue root = JsonParser(trimmed).Parse();
+        std::string jsonText;
+        if (!ExtractFirstJsonObject(trimmed, jsonText))
+        {
+            throw std::runtime_error("AI response did not contain a JSON object.");
+        }
+
+        const bool recoveredFromWrappedOutput = jsonText.size() != trimmed.size();
+        const JsonValue root = JsonParser(jsonText).Parse();
         if (root.type != JsonValue::Type::Object)
         {
             throw std::runtime_error("AI response root must be a JSON object.");
@@ -1643,6 +1847,10 @@ void ChatLookDevApp::HandleLlmResponse(const std::string& text)
 
         m_chatMessages.push_back({ "assistant", replyValue->string });
         actionDiagnostics << "Applied actions: " << appliedCount << ".";
+        if (recoveredFromWrappedOutput)
+        {
+            actionDiagnostics << " Ignored non-JSON text around the response.";
+        }
         m_lastActionDiagnostics = actionDiagnostics.str();
         m_scrollChatToBottom = true;
     }
@@ -1656,6 +1864,68 @@ void ChatLookDevApp::HandleLlmResponse(const std::string& text)
 
 bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& params, std::string& diagnostics)
 {
+    if (method == "set_model_transform")
+    {
+        rb::ModelTransform transform = m_project.modelTransform;
+        if (JsonBoolOr(params, "reset", false))
+        {
+            transform = {};
+        }
+
+        if (!ReadOptionalFloat3(params, "translation", -1000000.0f, 1000000.0f, transform.translation, diagnostics)) return false;
+        std::array<float, 3> translationDelta = { 0.0f, 0.0f, 0.0f };
+        if (!ReadOptionalFloat3(params, "translationDelta", -1000000.0f, 1000000.0f, translationDelta, diagnostics)) return false;
+        for (std::size_t i = 0; i < 3; ++i)
+        {
+            transform.translation[i] = std::clamp(transform.translation[i] + translationDelta[i], -1000000.0f, 1000000.0f);
+        }
+
+        if (!ReadOptionalFloat3(params, "rotationDegrees", -36000.0f, 36000.0f, transform.rotationDegrees, diagnostics)) return false;
+        std::array<float, 3> rotationDegreesDelta = { 0.0f, 0.0f, 0.0f };
+        if (!ReadOptionalFloat3(params, "rotationDegreesDelta", -36000.0f, 36000.0f, rotationDegreesDelta, diagnostics)) return false;
+        for (std::size_t i = 0; i < 3; ++i)
+        {
+            transform.rotationDegrees[i] = std::clamp(transform.rotationDegrees[i] + rotationDegreesDelta[i], -36000.0f, 36000.0f);
+        }
+
+        if (const JsonValue* rotationRadians = FindMember(params, "rotationRadians"))
+        {
+            if (rotationRadians->type != JsonValue::Type::Array || rotationRadians->array.size() != 3)
+            {
+                diagnostics = "rotationRadians must be a float3 array.";
+                return false;
+            }
+            std::array<float, 3> radians = { 0.0f, 0.0f, 0.0f };
+            if (!ReadOptionalFloat3(params, "rotationRadians", -628.31854f, 628.31854f, radians, diagnostics)) return false;
+            transform.rotationDegrees =
+            {
+                radians[0] * 57.2957795f,
+                radians[1] * 57.2957795f,
+                radians[2] * 57.2957795f,
+            };
+        }
+
+        if (const JsonValue* rotationRadiansDelta = FindMember(params, "rotationRadiansDelta"))
+        {
+            if (rotationRadiansDelta->type != JsonValue::Type::Array || rotationRadiansDelta->array.size() != 3)
+            {
+                diagnostics = "rotationRadiansDelta must be a float3 array.";
+                return false;
+            }
+            std::array<float, 3> radiansDelta = { 0.0f, 0.0f, 0.0f };
+            if (!ReadOptionalFloat3(params, "rotationRadiansDelta", -628.31854f, 628.31854f, radiansDelta, diagnostics)) return false;
+            for (std::size_t i = 0; i < 3; ++i)
+            {
+                transform.rotationDegrees[i] = std::clamp(transform.rotationDegrees[i] + radiansDelta[i] * 57.2957795f, -36000.0f, 36000.0f);
+            }
+        }
+
+        m_project.modelTransform = transform;
+        ApplyModelTransform();
+        MarkProjectDirty();
+        return true;
+    }
+
     if (method == "set_view_settings")
     {
         rb::LookDevViewSettings view = m_project.lookDevViewSettings;

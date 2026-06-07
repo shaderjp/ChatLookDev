@@ -69,6 +69,7 @@ public:
     void SetLookDevEnvironment(const rb::LookDevEnvironment& environment);
     void SetLookDevViewSettings(const rb::LookDevViewSettings& settings);
     void SetDebugViewMode(rb::LookDevDisplayMode displayMode);
+    void SetModelTransform(const rb::ModelTransform& transform);
 
     rb::ViewportCamera CameraState() const;
     void SetCameraState(const rb::ViewportCamera& camera);
@@ -176,6 +177,8 @@ private:
     void UpdateConstants(float deltaSeconds);
     void DrawSky();
     void DrawScene();
+    DirectX::XMMATRIX ModelMatrix() const;
+    void TransformedSceneBounds(DirectX::XMFLOAT3& boundsMin, DirectX::XMFLOAT3& boundsMax) const;
     void CameraBasis(DirectX::XMVECTOR& forward, DirectX::XMVECTOR& right, DirectX::XMVECTOR& up) const;
     float SceneRadius() const;
     D3D12_CPU_DESCRIPTOR_HANDLE RtvHandle(UINT index) const;
@@ -257,6 +260,7 @@ private:
     float m_cameraMoveScale = 1.0f;
     SceneConstants m_sceneConstants = {};
     LookDevConstants m_lookDevConstants = {};
+    rb::ModelTransform m_modelTransform;
     rb::LookDevEnvironment m_lookDevEnvironment;
     rb::LookDevViewSettings m_lookDevViewSettings;
     std::string m_environmentStatus = "Using SkyColor background.";

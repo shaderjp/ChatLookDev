@@ -79,6 +79,12 @@ struct ViewportCamera
     float distance = 4.0f;
 };
 
+struct ModelTransform
+{
+    std::array<float, 3> translation = { 0.0f, 0.0f, 0.0f };
+    std::array<float, 3> rotationDegrees = { 0.0f, 0.0f, 0.0f };
+};
+
 struct LookDevEnvironment
 {
     std::wstring environmentPath;
@@ -106,6 +112,7 @@ struct ProjectFile
     std::wstring scenePath;
     std::array<float, 4> skyTopColor = { 0.12f, 0.22f, 0.36f, 1.0f };
     std::array<float, 4> skyHorizonColor = { 0.035f, 0.045f, 0.055f, 1.0f };
+    ModelTransform modelTransform;
     ViewportCamera viewportCamera;
     bool hasViewportCamera = false;
     LookDevEnvironment lookDevEnvironment;

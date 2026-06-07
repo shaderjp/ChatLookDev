@@ -1,6 +1,12 @@
 # ChatLookDev
 
+日本語版: [README.ja.md](README.ja.md)
+
 ChatLookDev is a small Direct3D 12 LookDev application for glTF/GLB PBR inspection with HDR IBL, ImGui docking controls, and an in-process llama.cpp chat panel.
+
+This repository is a sample being built with Codex and vibe coding. It is meant as a compact reference for iterating on a local, AI-assisted LookDev workflow rather than a finished production tool.
+
+![ChatLookDev screenshot](images/screenshot.png)
 
 ## Scope
 
@@ -13,6 +19,7 @@ ChatLookDev is a small Direct3D 12 LookDev application for glTF/GLB PBR inspecti
 - Split-sum IBL precomputation on GPU.
 - Sun + IBL physical-style controls: sun illuminance in lux, exposure EV, HDRI intensity multiplier.
 - ImGui docking panels: Viewport, Scene, Material, Lighting, AI Chat, Diagnostics / Stats.
+- Model transform controls through ImGui and the AI action system.
 - llama.cpp in-process local LLM service, CPU-only by default.
 
 Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tracing, Vulkan, and mesh shader experiments are intentionally out of v1.
@@ -55,6 +62,7 @@ Projects are saved as `.chatlookdev.json` and include:
 
 - scene path
 - HDRI path
+- model transform
 - camera
 - Sun / IBL / view settings
 - material overrides
