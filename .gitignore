@@ -34,6 +34,7 @@
 imgui.ini
 !/imgui.ini
 imgui.user.ini
+ui.user.json
 Assets/Models/**/*.gguf
 /dist/
 

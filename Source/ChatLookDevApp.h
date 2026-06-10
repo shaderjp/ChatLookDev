@@ -42,8 +42,11 @@ struct AiExchange
     std::string rejectedReason;
     std::string finishReason;
     bool usedGrammar = false;
+    bool usedMtp = false;
     int promptTokens = 0;
     int outputTokens = 0;
+    int draftTokens = 0;
+    int acceptedDraftTokens = 0;
     double elapsedMs = 0.0;
     int appliedCount = 0;
     int rejectedCount = 0;
@@ -81,6 +84,8 @@ private:
     void DrawAiChatPanel();
     void DrawActionHistoryPanel();
     void DrawDiagnosticsPanel();
+    void DrawUiSettingsPanel();
+    void DrawCameraOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
     void RenderFrame(float deltaSeconds);
     void DrawSunDirectionOverlay(const ImVec2& imageMin, const ImVec2& imageMax);
     void HandleViewportInput(const ImVec2& imageMin, const ImVec2& imageMax);
@@ -93,10 +98,18 @@ private:
     void ApplyModelTransform();
     void ApplyLookDevSettings();
     void ApplyMaterialAssignments();
+    void CommitCameraState(const rb::ViewportCamera& camera);
+    void FrameSceneCamera();
+    bool ApplyCameraPreset(const std::string& presetName, bool frameScene);
+    bool StoreCameraBookmark(std::size_t slot);
+    bool RecallCameraBookmark(std::size_t slot);
     void ApplyImportedTextureOverrides(rb::ImportedScene& scene);
     void EnsureMaterialSelection();
     void MarkProjectDirty();
     void ResetUiLayout();
+    void LoadUiSettings();
+    bool SaveUiSettings();
+    void ResetUiSettings();
 
     void SaveProject();
     void SaveProjectAs();
@@ -131,6 +144,12 @@ private:
     std::string m_sceneDiagnostics = "Using built-in preview cube.";
     std::string m_lastActionDiagnostics;
     std::string m_projectDiagnostics;
+    rb::UiSettings m_uiSettings;
+    std::filesystem::path m_uiSettingsPath;
+    std::string m_uiSettingsDiagnostics;
+    bool m_showUiSettings = false;
+    bool m_uiSettingsRestartRequired = false;
+    bool m_showCameraOverlay = true;
 
     std::vector<ChatMessage> m_chatMessages;
     std::vector<AiExchange> m_aiHistory;

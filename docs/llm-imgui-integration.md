@@ -80,6 +80,8 @@ Allowed methods are:
 - `set_camera`
 - `set_model_transform`
 
+`set_camera` accepts direct numeric camera fields (`target`, `yaw`, `pitch`, `yawDegrees`, `pitchDegrees`, `distance`, and `fovDegrees`) plus view workflow commands: `frameScene`, `preset` (`Front`, `Back`, `Left`, `Right`, `Top`, `Bottom`, `Iso`), `storeBookmark` (`1..3`), and `recallBookmark` (`1..3`). Bookmark recall is rejected if the requested slot is empty.
+
 If grammar initialization fails, the service falls back to unconstrained generation and emits diagnostics. Safety still depends on the C++ validation path, not the grammar alone.
 
 ## Response Handling and Actions
@@ -113,7 +115,7 @@ This keeps ImGui and D3D12 calls off the worker thread and avoids cross-thread r
 
 ## Persistence
 
-Project JSON stores LLM runtime settings such as model path, context tokens, max tokens, GPU layers, CPU threads, sampling settings, and `structuredJson`.
+Project JSON stores LLM runtime settings such as model path, context tokens, max tokens, GPU layers, CPU threads, sampling settings, and `structuredJson`. Camera bookmark slots are saved with the project state, while chat history and Action History are not.
 
 Action History is session-only. It is intentionally not serialized into project files.
 

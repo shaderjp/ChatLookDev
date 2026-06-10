@@ -73,7 +73,7 @@
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(ProjectDir)ThirdParty\llama.cpp\include;$(ProjectDir)ThirdParty\llama.cpp\ggml\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(ProjectDir)ThirdParty\llama.cpp\include;$(ProjectDir)ThirdParty\llama.cpp\ggml\include;$(ProjectDir)ThirdParty\llama.cpp\common;$(ProjectDir)ThirdParty\llama.cpp\vendor;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -82,10 +82,10 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama-common.lib;llama-common-base.lib;cpp-httplib.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(LlamaCuda)'=='ON'">ggml-cuda.lib;cuda.lib;cudart.lib;cublas.lib;cublasLt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(LlamaVulkan)'=='ON'">ggml-vulkan.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\common\$(Configuration);$(LlamaCppBuildRoot)\vendor\cpp-httplib\$(Configuration);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalLibraryDirectories Condition="'$(LlamaCuda)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-cuda\$(Configuration);$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalLibraryDirectories Condition="'$(LlamaVulkan)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-vulkan\$(Configuration);$(VulkanSdkLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
@@ -98,7 +98,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(ProjectDir)ThirdParty\llama.cpp\include;$(ProjectDir)ThirdParty\llama.cpp\ggml\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(ProjectDir)ThirdParty\llama.cpp\include;$(ProjectDir)ThirdParty\llama.cpp\ggml\include;$(ProjectDir)ThirdParty\llama.cpp\common;$(ProjectDir)ThirdParty\llama.cpp\vendor;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -109,10 +109,10 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;llama-common.lib;llama-common-base.lib;cpp-httplib.lib;llama.lib;ggml.lib;ggml-base.lib;ggml-cpu.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(LlamaCuda)'=='ON'">ggml-cuda.lib;cuda.lib;cudart.lib;cublas.lib;cublasLt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalDependencies Condition="'$(LlamaVulkan)'=='ON'">ggml-vulkan.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);$(LlamaCppBuildRoot)\common\$(Configuration);$(LlamaCppBuildRoot)\vendor\cpp-httplib\$(Configuration);$(LlamaCppBuildRoot)\src\$(Configuration);$(LlamaCppBuildRoot)\ggml\src\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalLibraryDirectories Condition="'$(LlamaCuda)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-cuda\$(Configuration);$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalLibraryDirectories Condition="'$(LlamaVulkan)'=='ON'">$(LlamaCppBuildRoot)\ggml\src\ggml-vulkan\$(Configuration);$(VulkanSdkLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>

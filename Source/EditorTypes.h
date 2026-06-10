@@ -80,6 +80,14 @@ struct ViewportCamera
     float fovDegrees = 45.0f;
 };
 
+struct CameraBookmark
+{
+    bool valid = false;
+    ViewportCamera camera;
+};
+
+constexpr std::size_t CameraBookmarkCount = 3;
+
 struct ModelTransform
 {
     std::array<float, 3> translation = { 0.0f, 0.0f, 0.0f };
@@ -119,6 +127,15 @@ struct LookDevShadowSettings
     float fitScale = 1.25f;
 };
 
+struct UiSettings
+{
+    float uiFontSize = 18.0f;
+    float chatFontSize = 22.0f;
+    float uiScale = 1.0f;
+    float chatTranscriptHeightRatio = 0.50f;
+    bool largeFramePadding = true;
+};
+
 struct ProjectFile
 {
     std::wstring path;
@@ -127,6 +144,7 @@ struct ProjectFile
     std::array<float, 4> skyHorizonColor = { 0.035f, 0.045f, 0.055f, 1.0f };
     ModelTransform modelTransform;
     ViewportCamera viewportCamera;
+    std::array<CameraBookmark, CameraBookmarkCount> cameraBookmarks;
     bool hasViewportCamera = false;
     LookDevEnvironment lookDevEnvironment;
     LookDevViewSettings lookDevViewSettings;

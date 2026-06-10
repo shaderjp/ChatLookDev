@@ -24,6 +24,7 @@ struct LocalLlmMessage
 struct LocalLlmConfig
 {
     std::filesystem::path modelPath;
+    std::filesystem::path mtpDraftModelPath;
     int contextTokens = 4096;
     int maxTokens = 512;
     int gpuLayers = 1;
@@ -32,6 +33,10 @@ struct LocalLlmConfig
     float topP = 0.9f;
     int topK = 40;
     bool structuredJson = true;
+    bool mtpEnabled = false;
+    int mtpDraftTokens = 4;
+    float mtpMinP = 0.0f;
+    bool mtpBackendSampling = true;
 };
 
 struct LocalLlmEvent
@@ -50,6 +55,9 @@ struct LocalLlmEvent
     double elapsedMs = 0.0;
     std::string finishReason;
     bool usedGrammar = false;
+    bool usedMtp = false;
+    int draftTokens = 0;
+    int acceptedDraftTokens = 0;
     std::string diagnostics;
 };
 
@@ -72,7 +80,10 @@ struct LocalLlmStatus
     int gpuLayers = 1;
     std::string inferenceMode = "CPU";
     std::string inferenceDevice;
+    std::string mtpMode;
     bool gpuOffloadAvailable = false;
+    bool mtpRequested = false;
+    bool mtpAvailable = false;
 };
 
 class LocalLlmService
@@ -100,12 +111,16 @@ private:
         double elapsedMs = 0.0;
         std::string finishReason;
         bool usedGrammar = false;
+        bool usedMtp = false;
+        int draftTokens = 0;
+        int acceptedDraftTokens = 0;
         std::string diagnostics;
     };
 
     void LoadWorker(LocalLlmConfig config);
     void GenerateWorker(std::vector<LocalLlmMessage> messages);
     GenerationResult Generate(const std::vector<LocalLlmMessage>& messages);
+    GenerationResult GenerateWithMtp(const std::vector<LocalLlmMessage>& messages);
     std::vector<int> Tokenize(const std::string& text, bool addSpecial, bool parseSpecial) const;
     std::string TokenToPiece(int token) const;
     std::string ApplyChatTemplate(const std::vector<LocalLlmMessage>& messages) const;
@@ -124,10 +139,14 @@ private:
     std::string m_stateText = "Stopped";
     std::string m_lastError;
     bool m_structuredGrammarActive = false;
+    bool m_mtpAvailable = false;
+    std::string m_mtpMode;
     std::string m_samplerDiagnostics;
 
     llama_model* m_model = nullptr;
+    llama_model* m_draftModel = nullptr;
     llama_context* m_context = nullptr;
+    llama_context* m_draftContext = nullptr;
     std::thread m_worker;
     std::atomic<bool> m_stopRequested = false;
 };

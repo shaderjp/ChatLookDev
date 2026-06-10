@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <commdlg.h>
 #include <cstring>
@@ -50,6 +51,24 @@ struct SunAngles
 {
     float azimuthDegrees = 0.0f;
     float elevationDegrees = 45.0f;
+};
+
+struct CameraPreset
+{
+    const char* name = "";
+    float yawDegrees = 0.0f;
+    float pitchDegrees = 0.0f;
+};
+
+constexpr CameraPreset CameraPresets[] =
+{
+    { "Front", 0.0f, 0.0f },
+    { "Back", 180.0f, 0.0f },
+    { "Left", -90.0f, 0.0f },
+    { "Right", 90.0f, 0.0f },
+    { "Top", 0.0f, 88.0f },
+    { "Bottom", 0.0f, -88.0f },
+    { "Iso", 45.0f, 35.0f },
 };
 
 std::string WideToUtf8(const std::wstring& text)
@@ -99,6 +118,33 @@ std::string PathToUtf8(const std::filesystem::path& path)
 std::filesystem::path Utf8ToPath(const std::string& text)
 {
     return std::filesystem::path(Utf8ToWide(text));
+}
+
+std::string LowerAscii(std::string text)
+{
+    for (char& ch : text)
+    {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return text;
+}
+
+const CameraPreset* FindCameraPreset(const std::string& name)
+{
+    const std::string normalized = LowerAscii(cld::TrimAscii(name));
+    for (const CameraPreset& preset : CameraPresets)
+    {
+        const std::string presetName = LowerAscii(preset.name);
+        if (normalized == presetName)
+        {
+            return &preset;
+        }
+    }
+    if (normalized == "isometric")
+    {
+        return &CameraPresets[6];
+    }
+    return nullptr;
 }
 
 std::filesystem::path AbsoluteLexicalPath(const std::filesystem::path& path)
@@ -340,6 +386,28 @@ bool ReadOptionalBool(const cld::JsonValue& value, const char* name, bool& targe
     return true;
 }
 
+bool ReadOptionalBookmarkSlot(const cld::JsonValue& value, const char* name, int& target, std::string& diagnostics)
+{
+    const cld::JsonValue* member = cld::FindMember(value, name);
+    if (!member)
+    {
+        return true;
+    }
+    if (member->type != cld::JsonValue::Type::Number)
+    {
+        diagnostics = std::string(name) + " must be a number in range 1..3.";
+        return false;
+    }
+    const int slot = static_cast<int>(std::lround(member->number));
+    if (std::abs(member->number - static_cast<double>(slot)) > 0.001 || slot < 1 || slot > static_cast<int>(rb::CameraBookmarkCount))
+    {
+        diagnostics = std::string(name) + " must be a number in range 1..3.";
+        return false;
+    }
+    target = slot;
+    return true;
+}
+
 bool ReadOptionalFloat3(const cld::JsonValue& value, const char* name, float minValue, float maxValue, std::array<float, 3>& target, std::string& diagnostics)
 {
     const cld::JsonValue* member = cld::FindMember(value, name);
@@ -403,6 +471,18 @@ std::string Float4Json(const std::array<float, 4>& value)
 {
     std::ostringstream json;
     json << "[" << value[0] << "," << value[1] << "," << value[2] << "," << value[3] << "]";
+    return json.str();
+}
+
+std::string CameraJson(const rb::ViewportCamera& camera)
+{
+    std::ostringstream json;
+    json << "{ "
+         << "\"target\": " << Float3Json(camera.target) << ", "
+         << "\"yaw\": " << camera.yaw << ", "
+         << "\"pitch\": " << camera.pitch << ", "
+         << "\"distance\": " << camera.distance << ", "
+         << "\"fovDegrees\": " << camera.fovDegrees << " }";
     return json.str();
 }
 
@@ -554,6 +634,34 @@ std::uint32_t NormalizeShadowResolution(std::uint32_t resolution)
     return 4096;
 }
 
+float UiSettingNumberOrDefault(const cld::JsonValue& value, const char* name, float defaultValue, float minValue, float maxValue, std::string& diagnostics)
+{
+    const cld::JsonValue* member = cld::FindMember(value, name);
+    if (!member)
+    {
+        return defaultValue;
+    }
+    if (member->type != cld::JsonValue::Type::Number || member->number < minValue || member->number > maxValue)
+    {
+        if (!diagnostics.empty())
+        {
+            diagnostics += " ";
+        }
+        diagnostics += std::string(name) + " was outside the allowed UI settings range.";
+        return defaultValue;
+    }
+    return static_cast<float>(member->number);
+}
+
+rb::UiSettings ClampUiSettings(rb::UiSettings settings)
+{
+    settings.uiFontSize = std::clamp(settings.uiFontSize, 14.0f, 28.0f);
+    settings.chatFontSize = std::clamp(settings.chatFontSize, 16.0f, 32.0f);
+    settings.uiScale = std::clamp(settings.uiScale, 0.85f, 1.5f);
+    settings.chatTranscriptHeightRatio = std::clamp(settings.chatTranscriptHeightRatio, 0.35f, 0.70f);
+    return settings;
+}
+
 bool IsSupportedAiAction(const std::string& method)
 {
     return method == "set_view_settings"
@@ -595,6 +703,7 @@ void ChatLookDevApp::Initialize(HINSTANCE instance, int showCommand)
     m_instance = instance;
     m_rootDirectory = DiscoverRootDirectory();
     InitializeDefaults();
+    LoadUiSettings();
 
     WNDCLASSEXW windowClass = {};
     windowClass.cbSize = sizeof(windowClass);
@@ -625,7 +734,7 @@ void ChatLookDevApp::Initialize(HINSTANCE instance, int showCommand)
 
     ShowWindow(m_hwnd, showCommand);
     UpdateWindow(m_hwnd);
-    m_backend.Initialize(m_hwnd, 1600, 980, m_rootDirectory);
+    m_backend.Initialize(m_hwnd, 1600, 980, m_rootDirectory, m_uiSettings);
     ApplyLookDevSettings();
     ApplyMaterialAssignments();
 
@@ -680,6 +789,10 @@ void ChatLookDevApp::InitializeDefaults()
     m_llmConfig.topP = 0.9f;
     m_llmConfig.topK = 40;
     m_llmConfig.structuredJson = true;
+    m_llmConfig.mtpEnabled = false;
+    m_llmConfig.mtpDraftTokens = 4;
+    m_llmConfig.mtpMinP = 0.0f;
+    m_llmConfig.mtpBackendSampling = true;
 }
 
 void ChatLookDevApp::MainLoop()
@@ -728,6 +841,7 @@ void ChatLookDevApp::DrawUi()
     DrawLightingPanel();
     DrawAiChatPanel();
     DrawDiagnosticsPanel();
+    DrawUiSettingsPanel();
 }
 
 void ChatLookDevApp::DrawDockSpace()
@@ -779,9 +893,17 @@ void ChatLookDevApp::DrawMainMenu()
             SaveProjectAs();
         }
         ImGui::Separator();
+        if (ImGui::MenuItem("UI Settings"))
+        {
+            m_showUiSettings = true;
+        }
         if (ImGui::MenuItem("Reset UI Layout"))
         {
             ResetUiLayout();
+        }
+        if (ImGui::MenuItem("Reset UI Settings"))
+        {
+            ResetUiSettings();
         }
         ImGui::EndMenu();
     }
@@ -801,9 +923,7 @@ void ChatLookDevApp::DrawMainMenu()
         }
         if (ImGui::MenuItem("Reset Camera"))
         {
-            m_backend.ResetCameraToScene();
-            m_project.hasViewportCamera = false;
-            MarkProjectDirty();
+            FrameSceneCamera();
         }
         ImGui::EndMenu();
     }
@@ -837,9 +957,71 @@ void ChatLookDevApp::DrawViewportPanel()
     const ImVec2 imagePos = ImGui::GetCursorScreenPos();
     ImTextureID textureId = static_cast<ImTextureID>(m_backend.SceneSrvGpu().ptr);
     ImGui::Image(textureId, ImVec2(width, height));
+    DrawCameraOverlay(imagePos, ImVec2(imagePos.x + width, imagePos.y + height));
     DrawSunDirectionOverlay(imagePos, ImVec2(imagePos.x + width, imagePos.y + height));
     HandleViewportInput(imagePos, ImVec2(imagePos.x + width, imagePos.y + height));
     ImGui::End();
+}
+
+void ChatLookDevApp::DrawCameraOverlay(const ImVec2& imageMin, const ImVec2& imageMax)
+{
+    if (!m_showCameraOverlay)
+    {
+        return;
+    }
+
+    const float width = imageMax.x - imageMin.x;
+    const float height = imageMax.y - imageMin.y;
+    if (width < 280.0f || height < 140.0f)
+    {
+        return;
+    }
+
+    const rb::ViewportCamera camera = m_backend.CameraState();
+    const float yawDegrees = camera.yaw * RadToDeg;
+    const float pitchDegrees = camera.pitch * RadToDeg;
+    std::array<std::string, 4> lines;
+    {
+        std::ostringstream text;
+        text << "FOV " << std::fixed << std::setprecision(1) << camera.fovDegrees
+             << "  Dist " << std::setprecision(2) << camera.distance;
+        lines[0] = text.str();
+    }
+    {
+        std::ostringstream text;
+        text << "Yaw " << std::fixed << std::setprecision(1) << yawDegrees
+             << "  Pitch " << pitchDegrees;
+        lines[1] = text.str();
+    }
+    {
+        std::ostringstream text;
+        text << "Target " << std::fixed << std::setprecision(2)
+             << camera.target[0] << ", " << camera.target[1] << ", " << camera.target[2];
+        lines[2] = text.str();
+    }
+    lines[3] = "Camera";
+
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 origin(imageMin.x + 16.0f, imageMin.y + 16.0f);
+    const ImVec2 padding(10.0f, 8.0f);
+    float boxWidth = 0.0f;
+    const float lineHeight = ImGui::GetTextLineHeight();
+    for (const std::string& line : lines)
+    {
+        boxWidth = std::max(boxWidth, ImGui::CalcTextSize(line.c_str()).x);
+    }
+    const ImVec2 boxMin = origin;
+    const ImVec2 boxMax(origin.x + boxWidth + padding.x * 2.0f, origin.y + lineHeight * 4.0f + padding.y * 2.0f + 6.0f);
+    drawList->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImVec4(0.02f, 0.025f, 0.03f, 0.68f)), 6.0f);
+    drawList->AddRect(boxMin, boxMax, ImGui::GetColorU32(ImVec4(0.65f, 0.70f, 0.78f, 0.34f)), 6.0f);
+
+    const ImU32 labelColor = ImGui::GetColorU32(ImVec4(0.55f, 0.78f, 1.0f, 0.96f));
+    const ImU32 textColor = ImGui::GetColorU32(ImVec4(0.92f, 0.95f, 1.0f, 0.94f));
+    drawList->AddText(ImVec2(origin.x + padding.x, origin.y + padding.y), labelColor, lines[3].c_str());
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        drawList->AddText(ImVec2(origin.x + padding.x, origin.y + padding.y + lineHeight * static_cast<float>(i + 1) + 2.0f), textColor, lines[i].c_str());
+    }
 }
 
 void ChatLookDevApp::DrawSunDirectionOverlay(const ImVec2& imageMin, const ImVec2& imageMax)
@@ -1075,6 +1257,7 @@ void ChatLookDevApp::DrawScenePanel()
     float yawDegrees = camera.yaw * RadToDeg;
     float pitchDegrees = camera.pitch * RadToDeg;
     bool cameraChanged = false;
+    ImGui::Checkbox("Show Camera Overlay", &m_showCameraOverlay);
     cameraChanged |= ImGui::DragFloat3("Target", camera.target.data(), 0.01f, -1000000.0f, 1000000.0f, "%.3f");
     cameraChanged |= ImGui::DragFloat("Yaw deg", &yawDegrees, 0.1f, -36000.0f, 36000.0f, "%.2f");
     cameraChanged |= ImGui::DragFloat("Pitch deg", &pitchDegrees, 0.1f, -88.81f, 88.81f, "%.2f");
@@ -1086,17 +1269,71 @@ void ChatLookDevApp::DrawScenePanel()
         camera.pitch = std::clamp(pitchDegrees * DegToRad, -1.55f, 1.55f);
         camera.distance = std::max(camera.distance, 0.001f);
         camera.fovDegrees = std::clamp(camera.fovDegrees, 5.0f, 120.0f);
-        m_backend.SetCameraState(camera);
-        m_project.viewportCamera = m_backend.CameraState();
-        m_project.hasViewportCamera = true;
-        MarkProjectDirty();
+        CommitCameraState(camera);
     }
     if (ImGui::Button("Frame Scene"))
     {
-        m_backend.ResetCameraToScene();
-        m_project.viewportCamera = m_backend.CameraState();
-        m_project.hasViewportCamera = true;
-        MarkProjectDirty();
+        FrameSceneCamera();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Front"))
+    {
+        ApplyCameraPreset("Front", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Back"))
+    {
+        ApplyCameraPreset("Back", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Iso"))
+    {
+        ApplyCameraPreset("Iso", true);
+    }
+    if (ImGui::Button("Left"))
+    {
+        ApplyCameraPreset("Left", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Right"))
+    {
+        ApplyCameraPreset("Right", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Top"))
+    {
+        ApplyCameraPreset("Top", true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Bottom"))
+    {
+        ApplyCameraPreset("Bottom", true);
+    }
+
+    ImGui::SeparatorText("Camera Bookmarks");
+    for (std::size_t slot = 0; slot < rb::CameraBookmarkCount; ++slot)
+    {
+        ImGui::PushID(static_cast<int>(slot));
+        ImGui::Text("%zu", slot + 1);
+        ImGui::SameLine();
+        if (ImGui::Button("Store"))
+        {
+            StoreCameraBookmark(slot);
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!m_project.cameraBookmarks[slot].valid);
+        if (ImGui::Button("Recall"))
+        {
+            RecallCameraBookmark(slot);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear"))
+        {
+            m_project.cameraBookmarks[slot] = {};
+            MarkProjectDirty();
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
     }
 
     const RendererStats stats = m_backend.Stats();
@@ -1350,6 +1587,10 @@ void ChatLookDevApp::DrawAiChatPanel()
     const LocalLlmStatus status = m_llm.Status();
     ImGui::Text("State: %s", status.stateText.c_str());
     ImGui::TextWrapped("Inference: %s", status.inferenceMode.c_str());
+    if (status.mtpRequested || status.mtpAvailable)
+    {
+        ImGui::TextWrapped("%s", status.mtpMode.c_str());
+    }
     if (!status.lastError.empty())
     {
         ImGui::TextWrapped("Error: %s", status.lastError.c_str());
@@ -1395,6 +1636,37 @@ void ChatLookDevApp::DrawAiChatPanel()
     ImGui::Checkbox("Structured JSON", &m_llmConfig.structuredJson);
     ImGui::SliderFloat("Temperature", &m_llmConfig.temperature, 0.0f, 1.5f);
     ImGui::SliderFloat("Top P", &m_llmConfig.topP, 0.05f, 1.0f);
+    bool mtpChanged = false;
+    mtpChanged |= ImGui::Checkbox("MTP Draft", &m_llmConfig.mtpEnabled);
+    if (m_llmConfig.mtpEnabled)
+    {
+        const std::string draftPath = PathToUtf8(m_llmConfig.mtpDraftModelPath);
+        ImGui::BeginDisabled();
+        ImGui::InputText("MTP Draft Model", const_cast<char*>(draftPath.c_str()), draftPath.size() + 1, ImGuiInputTextFlags_ReadOnly);
+        ImGui::EndDisabled();
+        if (ImGui::Button("Browse MTP Draft"))
+        {
+            const auto path = OpenFileDialog(L"GGUF Model\0*.gguf\0All Files\0*.*\0");
+            if (!path.empty())
+            {
+                m_llmConfig.mtpDraftModelPath = path;
+                mtpChanged = true;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Clear MTP Draft"))
+        {
+            m_llmConfig.mtpDraftModelPath.clear();
+            mtpChanged = true;
+        }
+        mtpChanged |= ImGui::SliderInt("MTP Draft Tokens", &m_llmConfig.mtpDraftTokens, 1, 16);
+        mtpChanged |= ImGui::SliderFloat("MTP Min P", &m_llmConfig.mtpMinP, 0.0f, 1.0f);
+        mtpChanged |= ImGui::Checkbox("MTP Backend Sampling", &m_llmConfig.mtpBackendSampling);
+    }
+    if (mtpChanged)
+    {
+        MarkProjectDirty();
+    }
     if (!m_lastLlmStats.empty())
     {
         ImGui::TextWrapped("%s", m_lastLlmStats.c_str());
@@ -1402,7 +1674,8 @@ void ChatLookDevApp::DrawAiChatPanel()
 
     ImGui::Separator();
     const float lowerPanelHeight = ImGui::GetContentRegionAvail().y;
-    const float transcriptHeight = std::clamp(lowerPanelHeight * 0.48f, 150.0f, 360.0f);
+    const float transcriptRatio = std::clamp(m_uiSettings.chatTranscriptHeightRatio, 0.35f, 0.70f);
+    const float transcriptHeight = std::clamp(lowerPanelHeight * transcriptRatio, 160.0f, 420.0f);
     ImGui::BeginChild("Transcript", ImVec2(0.0f, transcriptHeight), ImGuiChildFlags_Borders);
     ImGui::PushFont(ChatTextFont());
     for (const ChatMessage& message : m_chatMessages)
@@ -1420,7 +1693,8 @@ void ChatLookDevApp::DrawAiChatPanel()
     ImGui::EndChild();
 
     ImGui::PushFont(ChatTextFont());
-    ImGui::InputTextMultiline("##ChatInput", m_chatInput.data(), m_chatInput.size(), ImVec2(-1.0f, 64.0f));
+    const float inputHeight = std::max(72.0f, ImGui::GetTextLineHeightWithSpacing() * 3.2f + ImGui::GetStyle().FramePadding.y * 2.0f);
+    ImGui::InputTextMultiline("##ChatInput", m_chatInput.data(), m_chatInput.size(), ImVec2(-1.0f, inputHeight));
     const bool chatInputActive = ImGui::IsItemActive();
     ImGui::PopFont();
     const bool canSend = status.state == LocalLlmState::Ready && TrimAscii(m_chatInput.data()).size() > 0;
@@ -1464,8 +1738,8 @@ void ChatLookDevApp::DrawActionHistoryPanel()
         return;
     }
 
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 2.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 2.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 3.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 3.0f));
     for (std::size_t offset = 0; offset < m_aiHistory.size(); ++offset)
     {
         const std::size_t index = m_aiHistory.size() - 1 - offset;
@@ -1495,11 +1769,18 @@ void ChatLookDevApp::DrawActionHistoryPanel()
             {
                 ImGui::TextWrapped("Diagnostics: %s", exchange.diagnostics.c_str());
             }
-            ImGui::Text("Prompt Tokens: %d  Output Tokens: %d  Finish: %s  Grammar: %s",
+            ImGui::Text("Prompt Tokens: %d  Output Tokens: %d  Finish: %s  Grammar: %s  MTP: %s",
                 exchange.promptTokens,
                 exchange.outputTokens,
                 exchange.finishReason.c_str(),
-                exchange.usedGrammar ? "on" : "off");
+                exchange.usedGrammar ? "on" : "off",
+                exchange.usedMtp ? "on" : "off");
+            if (exchange.usedMtp)
+            {
+                ImGui::Text("MTP Draft: %d accepted / %d generated",
+                    exchange.acceptedDraftTokens,
+                    exchange.draftTokens);
+            }
             for (const AiActionLogEntry& action : exchange.actions)
             {
                 ImGui::BulletText("%s: %s%s",
@@ -1548,6 +1829,14 @@ void ChatLookDevApp::DrawDiagnosticsPanel()
     ImGui::TextWrapped("LLM Inference: %s", llmStatus.inferenceMode.c_str());
     ImGui::Separator();
     ImGui::TextWrapped("Root: %s", PathToUtf8(m_rootDirectory).c_str());
+    if (!m_uiSettingsDiagnostics.empty())
+    {
+        ImGui::TextWrapped("UI: %s", m_uiSettingsDiagnostics.c_str());
+    }
+    if (m_uiSettingsRestartRequired)
+    {
+        ImGui::TextWrapped("UI: restart required for font and style changes.");
+    }
     if (!m_project.path.empty())
     {
         ImGui::TextWrapped("Project: %s%s", PathToUtf8(m_project.path).c_str(), m_projectDirty ? " *" : "");
@@ -1560,6 +1849,57 @@ void ChatLookDevApp::DrawDiagnosticsPanel()
     {
         ImGui::Separator();
         ImGui::TextWrapped("AI: %s", m_lastActionDiagnostics.c_str());
+    }
+    ImGui::End();
+}
+
+void ChatLookDevApp::DrawUiSettingsPanel()
+{
+    if (!m_showUiSettings)
+    {
+        return;
+    }
+
+    ImGui::Begin("UI Settings", &m_showUiSettings);
+    rb::UiSettings edited = m_uiSettings;
+    bool changed = false;
+    changed |= ImGui::SliderFloat("UI Font Size", &edited.uiFontSize, 14.0f, 28.0f, "%.1f px");
+    changed |= ImGui::SliderFloat("Chat Font Size", &edited.chatFontSize, 16.0f, 32.0f, "%.1f px");
+    changed |= ImGui::SliderFloat("UI Scale", &edited.uiScale, 0.85f, 1.5f, "%.2f");
+    changed |= ImGui::SliderFloat("Chat Transcript Ratio", &edited.chatTranscriptHeightRatio, 0.35f, 0.70f, "%.2f");
+    changed |= ImGui::Checkbox("Large Frame Padding", &edited.largeFramePadding);
+
+    if (changed)
+    {
+        const bool restartFieldChanged =
+            edited.uiFontSize != m_uiSettings.uiFontSize
+            || edited.chatFontSize != m_uiSettings.chatFontSize
+            || edited.uiScale != m_uiSettings.uiScale
+            || edited.largeFramePadding != m_uiSettings.largeFramePadding;
+        m_uiSettings = ClampUiSettings(edited);
+        if (SaveUiSettings() && restartFieldChanged)
+        {
+            m_uiSettingsRestartRequired = true;
+        }
+    }
+
+    if (!m_uiSettingsPath.empty())
+    {
+        ImGui::TextWrapped("Settings: %s", PathToUtf8(m_uiSettingsPath).c_str());
+    }
+    ImGui::TextWrapped("Font size, UI scale, and padding changes are applied on next launch. Chat transcript ratio applies immediately.");
+    if (m_uiSettingsRestartRequired)
+    {
+        ImGui::TextWrapped("Restart ChatLookDev to apply font and style changes.");
+    }
+    if (!m_uiSettingsDiagnostics.empty())
+    {
+        ImGui::TextWrapped("%s", m_uiSettingsDiagnostics.c_str());
+    }
+
+    if (ImGui::Button("Reset UI Settings"))
+    {
+        ResetUiSettings();
     }
     ImGui::End();
 }
@@ -1730,6 +2070,62 @@ void ChatLookDevApp::ApplyMaterialAssignments()
     EnsureMaterialSelection();
 }
 
+void ChatLookDevApp::CommitCameraState(const rb::ViewportCamera& camera)
+{
+    m_backend.SetCameraState(camera);
+    m_project.viewportCamera = m_backend.CameraState();
+    m_project.hasViewportCamera = true;
+    MarkProjectDirty();
+}
+
+void ChatLookDevApp::FrameSceneCamera()
+{
+    m_backend.ResetCameraToScene();
+    m_project.viewportCamera = m_backend.CameraState();
+    m_project.hasViewportCamera = true;
+    MarkProjectDirty();
+}
+
+bool ChatLookDevApp::ApplyCameraPreset(const std::string& presetName, bool frameScene)
+{
+    const CameraPreset* preset = FindCameraPreset(presetName);
+    if (!preset)
+    {
+        return false;
+    }
+    if (frameScene)
+    {
+        m_backend.ResetCameraToScene();
+    }
+    rb::ViewportCamera camera = m_backend.CameraState();
+    camera.yaw = preset->yawDegrees * DegToRad;
+    camera.pitch = std::clamp(preset->pitchDegrees * DegToRad, -1.55f, 1.55f);
+    CommitCameraState(camera);
+    return true;
+}
+
+bool ChatLookDevApp::StoreCameraBookmark(std::size_t slot)
+{
+    if (slot >= m_project.cameraBookmarks.size())
+    {
+        return false;
+    }
+    m_project.cameraBookmarks[slot].valid = true;
+    m_project.cameraBookmarks[slot].camera = m_backend.CameraState();
+    MarkProjectDirty();
+    return true;
+}
+
+bool ChatLookDevApp::RecallCameraBookmark(std::size_t slot)
+{
+    if (slot >= m_project.cameraBookmarks.size() || !m_project.cameraBookmarks[slot].valid)
+    {
+        return false;
+    }
+    CommitCameraState(m_project.cameraBookmarks[slot].camera);
+    return true;
+}
+
 void ChatLookDevApp::EnsureMaterialSelection()
 {
     if (m_project.materialAssignments.empty())
@@ -1758,6 +2154,86 @@ void ChatLookDevApp::ResetUiLayout()
     {
         m_projectDiagnostics = "Failed to reset ImGui layout.";
     }
+}
+
+void ChatLookDevApp::LoadUiSettings()
+{
+    m_uiSettingsPath = (m_rootDirectory / "ui.user.json").lexically_normal();
+    m_uiSettings = {};
+    m_uiSettingsDiagnostics.clear();
+    m_uiSettingsRestartRequired = false;
+
+    if (!PathExists(m_uiSettingsPath))
+    {
+        return;
+    }
+
+    try
+    {
+        const JsonValue root = JsonParser(TrimAscii(ReadTextFile(m_uiSettingsPath))).Parse();
+        if (root.type != JsonValue::Type::Object)
+        {
+            throw std::runtime_error("UI settings root must be an object.");
+        }
+
+        rb::UiSettings defaults;
+        rb::UiSettings loaded;
+        std::string rangeDiagnostics;
+        loaded.uiFontSize = UiSettingNumberOrDefault(root, "uiFontSize", defaults.uiFontSize, 14.0f, 28.0f, rangeDiagnostics);
+        loaded.chatFontSize = UiSettingNumberOrDefault(root, "chatFontSize", defaults.chatFontSize, 16.0f, 32.0f, rangeDiagnostics);
+        loaded.uiScale = UiSettingNumberOrDefault(root, "uiScale", defaults.uiScale, 0.85f, 1.5f, rangeDiagnostics);
+        loaded.chatTranscriptHeightRatio = UiSettingNumberOrDefault(root, "chatTranscriptHeightRatio", defaults.chatTranscriptHeightRatio, 0.35f, 0.70f, rangeDiagnostics);
+        loaded.largeFramePadding = JsonBoolOr(root, "largeFramePadding", defaults.largeFramePadding);
+        m_uiSettings = ClampUiSettings(loaded);
+        m_uiSettingsDiagnostics = rangeDiagnostics;
+    }
+    catch (const std::exception& ex)
+    {
+        m_uiSettings = {};
+        m_uiSettingsDiagnostics = "UI settings load failed; using defaults: " + std::string(ex.what());
+    }
+}
+
+bool ChatLookDevApp::SaveUiSettings()
+{
+    try
+    {
+        if (m_uiSettingsPath.empty())
+        {
+            m_uiSettingsPath = (m_rootDirectory / "ui.user.json").lexically_normal();
+        }
+        m_uiSettings = ClampUiSettings(m_uiSettings);
+        std::ostringstream json;
+        json << "{\n";
+        json << "  \"version\": 1,\n";
+        json << "  \"uiFontSize\": " << m_uiSettings.uiFontSize << ",\n";
+        json << "  \"chatFontSize\": " << m_uiSettings.chatFontSize << ",\n";
+        json << "  \"uiScale\": " << m_uiSettings.uiScale << ",\n";
+        json << "  \"chatTranscriptHeightRatio\": " << m_uiSettings.chatTranscriptHeightRatio << ",\n";
+        json << "  \"largeFramePadding\": " << (m_uiSettings.largeFramePadding ? "true" : "false") << "\n";
+        json << "}\n";
+        WriteTextFile(m_uiSettingsPath, json.str());
+        m_uiSettingsDiagnostics = "UI settings saved.";
+        return true;
+    }
+    catch (const std::exception& ex)
+    {
+        m_uiSettingsDiagnostics = "UI settings save failed: " + std::string(ex.what());
+        return false;
+    }
+}
+
+void ChatLookDevApp::ResetUiSettings()
+{
+    if (m_uiSettingsPath.empty())
+    {
+        m_uiSettingsPath = (m_rootDirectory / "ui.user.json").lexically_normal();
+    }
+    std::error_code ec;
+    std::filesystem::remove(m_uiSettingsPath, ec);
+    m_uiSettings = {};
+    m_uiSettingsRestartRequired = true;
+    m_uiSettingsDiagnostics = ec ? "Failed to remove UI settings file." : "Reset UI settings to defaults. Restart to apply font and style changes.";
 }
 
 void ChatLookDevApp::SaveProject()
@@ -1803,12 +2279,20 @@ bool ChatLookDevApp::SaveProjectToDisk(const std::filesystem::path& requestedPat
              << "\"rotationDegrees\": " << Float3Json(m_project.modelTransform.rotationDegrees) << " },\n";
         json << "  \"skyTopColor\": " << Float4Json(m_project.skyTopColor) << ",\n";
         json << "  \"skyHorizonColor\": " << Float4Json(m_project.skyHorizonColor) << ",\n";
-        json << "  \"camera\": { "
-             << "\"target\": " << Float3Json(m_project.viewportCamera.target) << ", "
-             << "\"yaw\": " << m_project.viewportCamera.yaw << ", "
-             << "\"pitch\": " << m_project.viewportCamera.pitch << ", "
-             << "\"distance\": " << m_project.viewportCamera.distance << ", "
-             << "\"fovDegrees\": " << m_project.viewportCamera.fovDegrees << " },\n";
+        json << "  \"camera\": " << CameraJson(m_project.viewportCamera) << ",\n";
+        json << "  \"cameraBookmarks\": [\n";
+        for (std::size_t i = 0; i < m_project.cameraBookmarks.size(); ++i)
+        {
+            const rb::CameraBookmark& bookmark = m_project.cameraBookmarks[i];
+            json << "    { \"valid\": " << (bookmark.valid ? "true" : "false")
+                 << ", \"camera\": " << CameraJson(bookmark.camera) << " }";
+            if (i + 1 < m_project.cameraBookmarks.size())
+            {
+                json << ",";
+            }
+            json << "\n";
+        }
+        json << "  ],\n";
         json << "  \"environment\": { "
              << "\"hdriPath\": \"" << EscapeJson(ProjectPathString(m_project.lookDevEnvironment.environmentPath, projectDirectory)) << "\", "
              << "\"rotationYaw\": " << m_project.lookDevEnvironment.rotationYaw << ", "
@@ -1833,6 +2317,7 @@ bool ChatLookDevApp::SaveProjectToDisk(const std::filesystem::path& requestedPat
              << "\"fitScale\": " << m_project.lookDevShadowSettings.fitScale << " },\n";
         json << "  \"llm\": { "
              << "\"modelPath\": \"" << EscapeJson(ProjectPathString(m_llmConfig.modelPath, projectDirectory)) << "\", "
+             << "\"mtpDraftModelPath\": \"" << EscapeJson(ProjectPathString(m_llmConfig.mtpDraftModelPath, projectDirectory)) << "\", "
              << "\"contextTokens\": " << m_llmConfig.contextTokens << ", "
              << "\"maxTokens\": " << m_llmConfig.maxTokens << ", "
              << "\"gpuLayers\": " << m_llmConfig.gpuLayers << ", "
@@ -1840,7 +2325,11 @@ bool ChatLookDevApp::SaveProjectToDisk(const std::filesystem::path& requestedPat
              << "\"temperature\": " << m_llmConfig.temperature << ", "
              << "\"topP\": " << m_llmConfig.topP << ", "
              << "\"topK\": " << m_llmConfig.topK << ", "
-             << "\"structuredJson\": " << (m_llmConfig.structuredJson ? "true" : "false") << " },\n";
+             << "\"structuredJson\": " << (m_llmConfig.structuredJson ? "true" : "false") << ", "
+             << "\"mtpEnabled\": " << (m_llmConfig.mtpEnabled ? "true" : "false") << ", "
+             << "\"mtpDraftTokens\": " << m_llmConfig.mtpDraftTokens << ", "
+             << "\"mtpMinP\": " << m_llmConfig.mtpMinP << ", "
+             << "\"mtpBackendSampling\": " << (m_llmConfig.mtpBackendSampling ? "true" : "false") << " },\n";
         json << "  \"materials\": [\n";
         for (std::size_t i = 0; i < m_project.materialAssignments.size(); ++i)
         {
@@ -1940,10 +2429,39 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
         {
             loadedProject.viewportCamera.target = JsonFloat3Or(*camera, "target", loadedProject.viewportCamera.target);
             loadedProject.viewportCamera.yaw = static_cast<float>(JsonNumberOr(*camera, "yaw", loadedProject.viewportCamera.yaw));
-            loadedProject.viewportCamera.pitch = static_cast<float>(JsonNumberOr(*camera, "pitch", loadedProject.viewportCamera.pitch));
-            loadedProject.viewportCamera.distance = static_cast<float>(JsonNumberOr(*camera, "distance", loadedProject.viewportCamera.distance));
+            loadedProject.viewportCamera.pitch = std::clamp(static_cast<float>(JsonNumberOr(*camera, "pitch", loadedProject.viewportCamera.pitch)), -1.55f, 1.55f);
+            loadedProject.viewportCamera.distance = std::max(static_cast<float>(JsonNumberOr(*camera, "distance", loadedProject.viewportCamera.distance)), 0.001f);
             loadedProject.viewportCamera.fovDegrees = std::clamp(static_cast<float>(JsonNumberOr(*camera, "fovDegrees", loadedProject.viewportCamera.fovDegrees)), 5.0f, 120.0f);
             loadedProject.hasViewportCamera = true;
+        }
+
+        if (const JsonValue* cameraBookmarks = FindMember(root, "cameraBookmarks"); cameraBookmarks && cameraBookmarks->type == JsonValue::Type::Array)
+        {
+            const std::size_t count = std::min(cameraBookmarks->array.size(), loadedProject.cameraBookmarks.size());
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                const JsonValue& bookmarkValue = cameraBookmarks->array[i];
+                if (bookmarkValue.type != JsonValue::Type::Object)
+                {
+                    continue;
+                }
+                rb::CameraBookmark bookmark;
+                bookmark.valid = JsonBoolOr(bookmarkValue, "valid", false);
+                const JsonValue* cameraValue = FindMember(bookmarkValue, "camera");
+                if (!cameraValue)
+                {
+                    cameraValue = &bookmarkValue;
+                }
+                if (cameraValue->type == JsonValue::Type::Object)
+                {
+                    bookmark.camera.target = JsonFloat3Or(*cameraValue, "target", bookmark.camera.target);
+                    bookmark.camera.yaw = static_cast<float>(JsonNumberOr(*cameraValue, "yaw", bookmark.camera.yaw));
+                    bookmark.camera.pitch = std::clamp(static_cast<float>(JsonNumberOr(*cameraValue, "pitch", bookmark.camera.pitch)), -1.55f, 1.55f);
+                    bookmark.camera.distance = std::max(static_cast<float>(JsonNumberOr(*cameraValue, "distance", bookmark.camera.distance)), 0.001f);
+                    bookmark.camera.fovDegrees = std::clamp(static_cast<float>(JsonNumberOr(*cameraValue, "fovDegrees", bookmark.camera.fovDegrees)), 5.0f, 120.0f);
+                }
+                loadedProject.cameraBookmarks[i] = bookmark;
+            }
         }
 
         if (const JsonValue* environment = FindMember(root, "environment"); environment && environment->type == JsonValue::Type::Object)
@@ -1980,6 +2498,7 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
         if (const JsonValue* llm = FindMember(root, "llm"); llm && llm->type == JsonValue::Type::Object)
         {
             loadedLlm.modelPath = ResolveProjectPath(JsonStringOr(*llm, "modelPath"), projectDirectory);
+            loadedLlm.mtpDraftModelPath = ResolveProjectPath(JsonStringOr(*llm, "mtpDraftModelPath"), projectDirectory);
             loadedLlm.contextTokens = static_cast<int>(JsonNumberOr(*llm, "contextTokens", loadedLlm.contextTokens));
             loadedLlm.maxTokens = static_cast<int>(JsonNumberOr(*llm, "maxTokens", loadedLlm.maxTokens));
             loadedLlm.gpuLayers = static_cast<int>(JsonNumberOr(*llm, "gpuLayers", loadedLlm.gpuLayers));
@@ -1989,6 +2508,10 @@ bool ChatLookDevApp::LoadProjectFromDisk(const std::filesystem::path& requestedP
             loadedLlm.topP = static_cast<float>(JsonNumberOr(*llm, "topP", loadedLlm.topP));
             loadedLlm.topK = static_cast<int>(JsonNumberOr(*llm, "topK", loadedLlm.topK));
             loadedLlm.structuredJson = JsonBoolOr(*llm, "structuredJson", loadedLlm.structuredJson);
+            loadedLlm.mtpEnabled = JsonBoolOr(*llm, "mtpEnabled", loadedLlm.mtpEnabled);
+            loadedLlm.mtpDraftTokens = std::clamp(static_cast<int>(JsonNumberOr(*llm, "mtpDraftTokens", loadedLlm.mtpDraftTokens)), 1, 16);
+            loadedLlm.mtpMinP = std::clamp(static_cast<float>(JsonNumberOr(*llm, "mtpMinP", loadedLlm.mtpMinP)), 0.0f, 1.0f);
+            loadedLlm.mtpBackendSampling = JsonBoolOr(*llm, "mtpBackendSampling", loadedLlm.mtpBackendSampling);
         }
 
         if (const JsonValue* materials = FindMember(root, "materials"); materials && materials->type == JsonValue::Type::Array)
@@ -2139,12 +2662,15 @@ std::string ChatLookDevApp::BuildSystemPrompt() const
     prompt << "Allowed sun params: sunDirection float3, sunColor float3, illuminanceLux.\n";
     prompt << "Allowed shadow params: enabled boolean, resolution 1024/2048/4096, strength 0..1, bias 0..0.05, softness 0..8, fitScale 1..4.\n";
     prompt << "Allowed material params: materialName optional, baseColorFactor float4, emissiveFactor float4, roughnessFactor, metallicFactor, normalStrength, occlusionStrength, alphaMode(Opaque/Mask/Blend), alphaCutoff, packedOcclusionRoughnessMetallic, flipNormalGreen.\n";
-    prompt << "Allowed camera params: target float3, yaw/pitch radians, yawDegrees/pitchDegrees optional, distance, fovDegrees 5..120.\n";
+    prompt << "Allowed camera params: target float3, yaw/pitch radians, yawDegrees/pitchDegrees optional, distance, fovDegrees 5..120, frameScene boolean, preset(Front/Back/Left/Right/Top/Bottom/Iso), storeBookmark 1..3, recallBookmark 1..3.\n";
     prompt << "Examples:\n";
     prompt << "User: 露出を下げて -> {\"reply\":\"露出を下げました。\",\"actions\":[{\"method\":\"set_view_settings\",\"params\":{\"exposure\":-1.0}}]}\n";
     prompt << "User: 太陽を強くして -> {\"reply\":\"太陽光を強くしました。\",\"actions\":[{\"method\":\"set_sun_settings\",\"params\":{\"illuminanceLux\":50000}}]}\n";
     prompt << "User: 影を柔らかくして -> {\"reply\":\"影を柔らかくしました。\",\"actions\":[{\"method\":\"set_shadow_settings\",\"params\":{\"softness\":4.0}}]}\n";
     prompt << "User: シャドウマスクを表示して -> {\"reply\":\"シャドウマスク表示に切り替えました。\",\"actions\":[{\"method\":\"set_view_settings\",\"params\":{\"displayMode\":\"Shadow Mask\"}}]}\n";
+    prompt << "User: 正面から見せて -> {\"reply\":\"正面ビューに切り替えました。\",\"actions\":[{\"method\":\"set_camera\",\"params\":{\"preset\":\"Front\",\"frameScene\":true}}]}\n";
+    prompt << "User: 今のカメラを1番に保存して -> {\"reply\":\"カメラを1番に保存しました。\",\"actions\":[{\"method\":\"set_camera\",\"params\":{\"storeBookmark\":1}}]}\n";
+    prompt << "User: 1番のカメラに戻して -> {\"reply\":\"1番のカメラに戻しました。\",\"actions\":[{\"method\":\"set_camera\",\"params\":{\"recallBookmark\":1}}]}\n";
     prompt << "User: モデルを右へ動かして -> {\"reply\":\"モデルを右へ少し移動しました。\",\"actions\":[{\"method\":\"set_model_transform\",\"params\":{\"translationDelta\":[0.25,0,0]}}]}\n";
     prompt << "User: この material を粗くして -> {\"reply\":\"選択中のマテリアルを粗くしました。\",\"actions\":[{\"method\":\"set_material_preview\",\"params\":{\"roughnessFactor\":0.85}}]}\n";
     prompt << "Do not request shader edits, MCP, automation, runtime compilation, DXR, path tracing, or external tools.\n";
@@ -2165,6 +2691,16 @@ std::string ChatLookDevApp::BuildControlStateJson() const
     json << "\"materialCount\":" << materialCount << ",";
     json << "\"modelTransform\":{\"translation\":" << Float3Json(m_project.modelTransform.translation) << ",\"rotationDegrees\":" << Float3Json(m_project.modelTransform.rotationDegrees) << "},";
     json << "\"camera\":{\"target\":" << Float3Json(camera.target) << ",\"yaw\":" << camera.yaw << ",\"pitch\":" << camera.pitch << ",\"distance\":" << camera.distance << ",\"fovDegrees\":" << camera.fovDegrees << "},";
+    json << "\"cameraBookmarks\":[";
+    for (std::size_t i = 0; i < m_project.cameraBookmarks.size(); ++i)
+    {
+        if (i > 0)
+        {
+            json << ",";
+        }
+        json << "{\"slot\":" << (i + 1) << ",\"valid\":" << (m_project.cameraBookmarks[i].valid ? "true" : "false") << "}";
+    }
+    json << "],";
     json << "\"environment\":{\"hdriPath\":\"" << EscapeJson(PathToUtf8(m_project.lookDevEnvironment.environmentPath)) << "\",\"rotationYaw\":" << m_project.lookDevEnvironment.rotationYaw << ",\"intensity\":" << m_project.lookDevEnvironment.intensity << ",\"backgroundMode\":\"" << BackgroundModeName(m_project.lookDevEnvironment.backgroundMode) << "\",\"sunDirection\":" << Float3Json(m_project.lookDevEnvironment.sunDirection) << ",\"sunColor\":" << Float3Json(m_project.lookDevEnvironment.sunColor) << ",\"illuminanceLux\":" << m_project.lookDevEnvironment.sunIntensity << "},";
     json << "\"view\":{\"exposure\":" << m_project.lookDevViewSettings.exposure << ",\"gamma\":" << m_project.lookDevViewSettings.gamma << ",\"toneMapper\":\"" << ToneMapperName(m_project.lookDevViewSettings.toneMapper) << "\",\"displayMode\":\"" << DisplayModeName(m_project.lookDevViewSettings.displayMode) << "\"},";
     json << "\"shadow\":{\"enabled\":" << (m_project.lookDevShadowSettings.enabled ? "true" : "false") << ",\"resolution\":" << NormalizeShadowResolution(m_project.lookDevShadowSettings.resolution) << ",\"strength\":" << m_project.lookDevShadowSettings.strength << ",\"bias\":" << m_project.lookDevShadowSettings.bias << ",\"softness\":" << m_project.lookDevShadowSettings.softness << ",\"fitScale\":" << m_project.lookDevShadowSettings.fitScale << "},";
@@ -2250,12 +2786,20 @@ void ChatLookDevApp::HandleLlmResponse(const LocalLlmEvent& event)
     exchange.elapsedMs = event.elapsedMs;
     exchange.finishReason = event.finishReason;
     exchange.usedGrammar = event.usedGrammar;
+    exchange.usedMtp = event.usedMtp;
+    exchange.draftTokens = event.draftTokens;
+    exchange.acceptedDraftTokens = event.acceptedDraftTokens;
     exchange.diagnostics = event.diagnostics;
     m_lastLlmStats = "Last generation: prompt " + std::to_string(event.promptTokens)
         + " tokens, output " + std::to_string(event.outputTokens)
         + " tokens, " + event.finishReason
         + ", " + std::to_string(static_cast<int>(event.elapsedMs)) + " ms"
         + (event.usedGrammar ? ", grammar on." : ", grammar off.");
+    if (event.usedMtp)
+    {
+        m_lastLlmStats += " MTP " + std::to_string(event.acceptedDraftTokens)
+            + "/" + std::to_string(event.draftTokens) + " accepted.";
+    }
 
     try
     {
@@ -2548,6 +3092,55 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
     if (method == "set_camera")
     {
         rb::ViewportCamera camera = m_backend.CameraState();
+        bool frameScene = false;
+        if (!ReadOptionalBool(params, "frameScene", frameScene, diagnostics)) return false;
+        int recallBookmark = 0;
+        if (!ReadOptionalBookmarkSlot(params, "recallBookmark", recallBookmark, diagnostics)) return false;
+        int storeBookmark = 0;
+        if (!ReadOptionalBookmarkSlot(params, "storeBookmark", storeBookmark, diagnostics)) return false;
+
+        const CameraPreset* preset = nullptr;
+        if (const JsonValue* presetValue = FindMember(params, "preset"))
+        {
+            if (presetValue->type != JsonValue::Type::String)
+            {
+                diagnostics = "preset must be a string.";
+                return false;
+            }
+            preset = FindCameraPreset(presetValue->string);
+            if (!preset)
+            {
+                diagnostics = "Unknown camera preset.";
+                return false;
+            }
+        }
+        if (recallBookmark > 0 && !m_project.cameraBookmarks[static_cast<std::size_t>(recallBookmark - 1)].valid)
+        {
+            diagnostics = "Camera bookmark is empty.";
+            return false;
+        }
+
+        if (commit)
+        {
+            if (frameScene)
+            {
+                m_backend.ResetCameraToScene();
+                camera = m_backend.CameraState();
+            }
+            if (recallBookmark > 0)
+            {
+                camera = m_project.cameraBookmarks[static_cast<std::size_t>(recallBookmark - 1)].camera;
+            }
+        }
+        else if (recallBookmark > 0)
+        {
+            camera = m_project.cameraBookmarks[static_cast<std::size_t>(recallBookmark - 1)].camera;
+        }
+        if (preset)
+        {
+            camera.yaw = preset->yawDegrees * DegToRad;
+            camera.pitch = std::clamp(preset->pitchDegrees * DegToRad, -1.55f, 1.55f);
+        }
         if (!ReadOptionalFloat3(params, "target", -1000000.0f, 1000000.0f, camera.target, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "yaw", -1000.0f, 1000.0f, camera.yaw, diagnostics)) return false;
         if (!ReadOptionalNumber(params, "pitch", -1.55f, 1.55f, camera.pitch, diagnostics)) return false;
@@ -2561,10 +3154,18 @@ bool ChatLookDevApp::ApplyAiAction(const std::string& method, const JsonValue& p
         if (!ReadOptionalNumber(params, "fovDegrees", 5.0f, 120.0f, camera.fovDegrees, diagnostics)) return false;
         if (commit)
         {
-            m_backend.SetCameraState(camera);
-            m_project.viewportCamera = m_backend.CameraState();
-            m_project.hasViewportCamera = true;
-            MarkProjectDirty();
+            CommitCameraState(camera);
+            if (storeBookmark > 0)
+            {
+                StoreCameraBookmark(static_cast<std::size_t>(storeBookmark - 1));
+            }
+            std::ostringstream message;
+            message << "Camera updated.";
+            if (storeBookmark > 0)
+            {
+                message << " Stored bookmark " << storeBookmark << ".";
+            }
+            diagnostics = message.str();
         }
         return true;
     }

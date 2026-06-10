@@ -80,6 +80,8 @@ grammar は top-level response を次の形に制限します。
 - `set_camera`
 - `set_model_transform`
 
+`set_camera` は直接指定の camera field (`target`、`yaw`、`pitch`、`yawDegrees`、`pitchDegrees`、`distance`、`fovDegrees`) に加えて、view workflow 用の `frameScene`、`preset` (`Front`、`Back`、`Left`、`Right`、`Top`、`Bottom`、`Iso`)、`storeBookmark` (`1..3`)、`recallBookmark` (`1..3`) を受け取れます。空の slot に対する bookmark recall は reject します。
+
 grammar の初期化に失敗した場合、service は unconstrained generation に fallback し、diagnostics を出します。安全性は grammar だけではなく、最終的に C++ 側の validation path で担保します。
 
 ## Response Handling と Actions
@@ -113,7 +115,7 @@ worker thread は `LocalLlmEvent` だけで UI に通知します。`m_stopReque
 
 ## Persistence
 
-Project JSON には LLM runtime settings を保存します。具体的には model path、context tokens、max tokens、GPU layers、CPU threads、sampling settings、`structuredJson` などです。
+Project JSON には LLM runtime settings を保存します。具体的には model path、context tokens、max tokens、GPU layers、CPU threads、sampling settings、`structuredJson` などです。Camera bookmark slot は project state として保存しますが、chat history と Action History は保存しません。
 
 Action History はセッション内診断用です。project file には保存しません。
 

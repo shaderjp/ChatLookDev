@@ -27,7 +27,9 @@ Additional v1.2 views:
 - Single Sun shadow map with strength, bias, softness, fit scale, and Shadow Mask debug view.
 - Debug display modes including Normal and Shadow Mask.
 - ImGui docking panels: Viewport, Scene, Material, Lighting, AI Chat, Diagnostics / Stats.
+- Camera overlay, scene-framing presets, FOV control, and three camera bookmark slots.
 - Model transform controls through ImGui and the AI action system.
+- Camera presets and bookmarks through ImGui and the AI action system.
 - llama.cpp in-process local LLM service, CPU-only by default with optional CUDA or Vulkan backend builds.
 
 Shader editing, MCP, automation bridges, runtime shader compilation, DXR/path tracing, Vulkan rendering, and mesh shader experiments are intentionally out of v1.
@@ -113,6 +115,8 @@ GGUF files are ignored by git. The application still starts without the model an
 
 The tracked `imgui.ini` file is the default docking layout seed. Runtime layout changes are saved to `imgui.user.ini`, which is ignored by git. Use `Project > Reset UI Layout` to discard the user layout and reload the default layout.
 
+Per-user readability settings are saved to ignored `ui.user.json`. Use `Project > UI Settings` to adjust UI font size, chat font size, UI scale, and chat transcript height. Font, scale, and padding changes are applied on the next launch; chat transcript height applies immediately. Use `Project > Reset UI Settings` to remove the user settings file and return to defaults on next launch.
+
 ## Project Files
 
 Projects are saved as `.chatlookdev.json` and include:
@@ -120,7 +124,7 @@ Projects are saved as `.chatlookdev.json` and include:
 - scene path
 - HDRI path
 - model transform
-- camera
+- camera and camera bookmarks
 - Sun / IBL / view settings
 - material overrides
 - local LLM runtime settings

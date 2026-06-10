@@ -247,6 +247,7 @@ You can also browse to another .gguf file from the AI Chat panel.
 Get-ChildItem -LiteralPath $packageDir -Recurse -File -Filter '*.gguf' -ErrorAction SilentlyContinue | Remove-Item -Force
 Get-ChildItem -LiteralPath $packageDir -Recurse -File -Filter '*.pdb' -ErrorAction SilentlyContinue | Remove-Item -Force
 Remove-Item -LiteralPath (Join-Path $packageDir 'imgui.user.ini') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $packageDir 'ui.user.json') -Force -ErrorAction SilentlyContinue
 
 $backendNotes = if ($Backend -eq 'Vulkan') {
     @'
@@ -285,6 +286,7 @@ Run ChatLookDev.exe from this folder.
 
 $backendNotes
 The default ImGui docking layout is seeded from imgui.ini. Runtime changes are saved to imgui.user.ini.
+Per-user font and readability settings are saved to ui.user.json.
 
 The GGUF model is not included. Place it at:
 Assets/Models/gemma-4-E4B-it/gemma-4-E4B-it-Q4_K_M.gguf
@@ -301,6 +303,7 @@ ChatLookDev $tag Windows x64 $Backend package
 
 $backendNotesJa
 既定の ImGui docking layout は imgui.ini から読み込まれます。実行時の layout 変更は imgui.user.ini に保存されます。
+フォントと読みやすさの per-user 設定は ui.user.json に保存されます。
 
 GGUF model は含まれていません。既定 path を使う場合は次の場所へ配置してください:
 Assets/Models/gemma-4-E4B-it/gemma-4-E4B-it-Q4_K_M.gguf
@@ -356,6 +359,7 @@ Windows x64 release packages for CPU and optional Vulkan LLM inference.
 - CPU packages start without CUDA or Vulkan SDK installations.
 - Vulkan packages require a Vulkan-capable GPU driver/runtime for GPU offload.
 - The default UI layout is seeded from imgui.ini; runtime changes are saved to imgui.user.ini.
+- Per-user font and readability settings are saved to ui.user.json.
 
 ## SHA256
 ````text

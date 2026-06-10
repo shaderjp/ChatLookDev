@@ -10,6 +10,10 @@ This document summarizes the v1.2 rendering-facing LookDev features and the UI s
 
 The main viewport combines a glTF/GLB PBR model, HDR IBL, Sun lighting, a docked ImGui layout, and the AI Chat panel. The Lighting panel exposes HDRI, Sun, shadow, view, and sky controls in one place.
 
+## UI Readability
+
+The default ImGui UI font is 18 px and the AI Chat font is 22 px. `Project > UI Settings` writes per-user readability settings to `ui.user.json`, separate from project files and the docking layout. Font size, UI scale, and padding changes apply on the next launch; chat transcript height applies immediately.
+
 ## Display Modes
 
 ![Normal display mode](../images/image3.png)
@@ -44,6 +48,12 @@ The Sun section provides both vector and angle controls:
 
 The viewport also draws a small Sun direction overlay. It is camera-relative, so the user can see where the Sun is coming from without placing a large helper object in the scene.
 
+## Camera UI
+
+The Scene panel exposes camera target, yaw, pitch, distance, and FOV. `Frame Scene` refits the camera to the loaded glTF/GLB or preview mesh, while `Front`, `Back`, `Left`, `Right`, `Top`, `Bottom`, and `Iso` apply common scene-framed viewing presets.
+
+The viewport can draw a compact camera overlay with FOV, distance, yaw/pitch, and target. Three camera bookmark slots can store and recall working views, and those bookmarks are saved in the project JSON.
+
 ## AI Actions
 
-The chat action system can modify the same render state that the ImGui controls edit, including view settings, Sun settings, shadow settings, material parameters, camera, and model transform. The UI still validates every action before committing changes to the renderer.
+The chat action system can modify the same render state that the ImGui controls edit, including view settings, Sun settings, shadow settings, material parameters, camera, camera presets/bookmarks, and model transform. The UI still validates every action before committing changes to the renderer.

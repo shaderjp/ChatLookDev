@@ -2,6 +2,7 @@
 
 #include <ggml-backend.h>
 #include <llama.h>
+#include <speculative.h>
 
 #include <algorithm>
 #include <chrono>
@@ -81,6 +82,59 @@ std::string InferenceModeText(const cld::LocalLlmConfig& config, bool gpuAvailab
     return "CPU";
 }
 
+int ClampMtpDraftTokens(int value)
+{
+    return std::clamp(value, 1, 16);
+}
+
+void AppendDiagnostics(std::string& diagnostics, const std::string& text)
+{
+    if (text.empty())
+    {
+        return;
+    }
+    if (!diagnostics.empty())
+    {
+        diagnostics += "\n";
+    }
+    diagnostics += text;
+}
+
+std::string MtpModeText(const cld::LocalLlmConfig& config, bool available)
+{
+    if (!config.mtpEnabled)
+    {
+        return "MTP disabled.";
+    }
+
+    std::ostringstream text;
+    text << "MTP " << (available ? "enabled" : "unavailable")
+         << " (draft max " << ClampMtpDraftTokens(config.mtpDraftTokens);
+    if (!config.mtpDraftModelPath.empty())
+    {
+        text << ", separate draft GGUF";
+    }
+    else
+    {
+        text << ", target MTP context";
+    }
+    text << ").";
+    return text.str();
+}
+
+common_params_speculative BuildMtpSpeculativeParams(const cld::LocalLlmConfig& config, llama_context* targetContext, llama_context* draftContext)
+{
+    common_params_speculative params;
+    params.types = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
+    params.draft.ctx_tgt = targetContext;
+    params.draft.ctx_dft = draftContext;
+    params.draft.n_max = ClampMtpDraftTokens(config.mtpDraftTokens);
+    params.draft.n_min = 0;
+    params.draft.p_min = std::clamp(config.mtpMinP, 0.0f, 1.0f);
+    params.draft.backend_sampling = config.mtpBackendSampling;
+    return params;
+}
+
 void FillBatch(llama_batch& batch, const std::vector<int>& tokens, int startPos, bool logitsLast)
 {
     batch.n_tokens = static_cast<int32_t>(tokens.size());
@@ -94,7 +148,13 @@ void FillBatch(llama_batch& batch, const std::vector<int>& tokens, int startPos,
     }
 }
 
-bool DecodeTokensInChunks(llama_context* context, const std::vector<int>& tokens, int startPos, int32_t maxBatchTokens, std::string& diagnostics)
+bool DecodeTokensInChunks(
+    llama_context* context,
+    const std::vector<int>& tokens,
+    int startPos,
+    int32_t maxBatchTokens,
+    std::string& diagnostics,
+    common_speculative* speculative = nullptr)
 {
     if (tokens.empty())
     {
@@ -127,10 +187,75 @@ bool DecodeTokensInChunks(llama_context* context, const std::vector<int>& tokens
             diagnostics = message.str();
             return false;
         }
+        if (speculative && !common_speculative_process(speculative, batch))
+        {
+            llama_batch_free(batch);
+            std::ostringstream message;
+            message << "common_speculative_process failed while processing prompt chunk at token " << offset << ".";
+            diagnostics = message.str();
+            return false;
+        }
     }
 
     llama_batch_free(batch);
     return true;
+}
+
+bool TrimSequenceAfter(llama_context* context, llama_pos keepEnd, std::string& diagnostics, const char* label)
+{
+    if (!context)
+    {
+        return true;
+    }
+    if (!llama_memory_seq_rm(llama_get_memory(context), 0, keepEnd, -1))
+    {
+        std::ostringstream message;
+        message << "Failed to remove speculative " << label << " tokens after position " << keepEnd << ".";
+        diagnostics = message.str();
+        return false;
+    }
+    return true;
+}
+
+struct DraftVerification
+{
+    std::vector<int> emittedTokens;
+    int acceptedDraftTokens = 0;
+    bool hitEog = false;
+};
+
+DraftVerification SampleAndAcceptDraft(llama_sampler* sampler, llama_context* context, const llama_vocab* vocab, const std::vector<int>& draft)
+{
+    DraftVerification verification;
+    verification.emittedTokens.reserve(draft.size() + 1);
+
+    std::size_t i = 0;
+    for (; i < draft.size(); ++i)
+    {
+        const int token = llama_sampler_sample(sampler, context, static_cast<int32_t>(i));
+        if (llama_vocab_is_eog(vocab, token))
+        {
+            verification.acceptedDraftTokens = token == draft[i] ? static_cast<int>(i + 1) : static_cast<int>(i);
+            verification.hitEog = true;
+            return verification;
+        }
+        verification.emittedTokens.push_back(token);
+        if (token != draft[i])
+        {
+            verification.acceptedDraftTokens = static_cast<int>(i);
+            return verification;
+        }
+        verification.acceptedDraftTokens = static_cast<int>(i + 1);
+    }
+
+    const int token = llama_sampler_sample(sampler, context, static_cast<int32_t>(i));
+    if (llama_vocab_is_eog(vocab, token))
+    {
+        verification.hitEog = true;
+        return verification;
+    }
+    verification.emittedTokens.push_back(token);
+    return verification;
 }
 
 const char* LookDevJsonGrammar()
@@ -176,6 +301,12 @@ bool LocalLlmService::LoadAsync(const LocalLlmConfig& config)
         SetState(LocalLlmState::Failed, "Failed");
         return false;
     }
+    if (config.mtpEnabled && !config.mtpDraftModelPath.empty() && !std::filesystem::exists(config.mtpDraftModelPath))
+    {
+        SetError("MTP draft GGUF model file was not found.");
+        SetState(LocalLlmState::Failed, "Failed");
+        return false;
+    }
     m_stopRequested = false;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -217,10 +348,20 @@ void LocalLlmService::JoinWorker()
 
 void LocalLlmService::ReleaseModel()
 {
+    if (m_draftContext)
+    {
+        llama_free(m_draftContext);
+        m_draftContext = nullptr;
+    }
     if (m_context)
     {
         llama_free(m_context);
         m_context = nullptr;
+    }
+    if (m_draftModel)
+    {
+        llama_model_free(m_draftModel);
+        m_draftModel = nullptr;
     }
     if (m_model)
     {
@@ -228,6 +369,8 @@ void LocalLlmService::ReleaseModel()
         m_model = nullptr;
     }
     m_structuredGrammarActive = false;
+    m_mtpAvailable = false;
+    m_mtpMode.clear();
     m_samplerDiagnostics.clear();
 }
 
@@ -238,10 +381,27 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
         SetState(LocalLlmState::Loading, "Loading");
         PushEvent(LocalLlmEvent::Kind::Status, "Loading GGUF model...");
 
+        const auto modelDeleter = [](llama_model* model)
+        {
+            if (model)
+            {
+                llama_model_free(model);
+            }
+        };
+        const auto contextDeleter = [](llama_context* context)
+        {
+            if (context)
+            {
+                llama_free(context);
+            }
+        };
+        using ModelPtr = std::unique_ptr<llama_model, decltype(modelDeleter)>;
+        using ContextPtr = std::unique_ptr<llama_context, decltype(contextDeleter)>;
+
         llama_model_params modelParams = llama_model_default_params();
         modelParams.n_gpu_layers = std::max(0, config.gpuLayers);
         const std::string modelPath = PathToUtf8(config.modelPath);
-        llama_model* model = llama_model_load_from_file(modelPath.c_str(), modelParams);
+        ModelPtr model(llama_model_load_from_file(modelPath.c_str(), modelParams), modelDeleter);
         if (!model)
         {
             throw std::runtime_error("llama_model_load_from_file failed.");
@@ -251,24 +411,86 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
         contextParams.n_ctx = std::max(1024, config.contextTokens);
         contextParams.n_batch = std::min<int32_t>(2048, contextParams.n_ctx);
         contextParams.n_ubatch = std::min<int32_t>(512, contextParams.n_batch);
-        llama_context* context = llama_init_from_model(model, contextParams);
+        if (config.mtpEnabled)
+        {
+            contextParams.n_rs_seq = static_cast<uint32_t>(ClampMtpDraftTokens(config.mtpDraftTokens));
+            contextParams.n_outputs_max = static_cast<uint32_t>(1 + ClampMtpDraftTokens(config.mtpDraftTokens));
+        }
+
+        ContextPtr context(llama_init_from_model(model.get(), contextParams), contextDeleter);
         if (!context)
         {
-            llama_model_free(model);
             throw std::runtime_error("llama_init_from_model failed.");
         }
         if (config.threads > 0)
         {
-            llama_set_n_threads(context, config.threads, config.threads);
+            llama_set_n_threads(context.get(), config.threads, config.threads);
+        }
+
+        ModelPtr draftModel(nullptr, modelDeleter);
+        ContextPtr draftContext(nullptr, contextDeleter);
+        bool mtpAvailable = false;
+        std::string mtpDiagnostics = MtpModeText(config, false);
+
+        if (config.mtpEnabled)
+        {
+            try
+            {
+                llama_model* draftModelForContext = model.get();
+                if (!config.mtpDraftModelPath.empty())
+                {
+                    PushEvent(LocalLlmEvent::Kind::Status, "Loading MTP draft GGUF model...");
+                    const std::string draftPath = PathToUtf8(config.mtpDraftModelPath);
+                    draftModel.reset(llama_model_load_from_file(draftPath.c_str(), modelParams));
+                    if (!draftModel)
+                    {
+                        throw std::runtime_error("llama_model_load_from_file failed for the MTP draft model.");
+                    }
+                    draftModelForContext = draftModel.get();
+                }
+
+                llama_context_params draftContextParams = contextParams;
+                draftContextParams.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+                draftContextParams.ctx_other = context.get();
+                draftContextParams.n_rs_seq = 0;
+                draftContextParams.n_outputs_max = static_cast<uint32_t>(1 + ClampMtpDraftTokens(config.mtpDraftTokens));
+                draftContext.reset(llama_init_from_model(draftModelForContext, draftContextParams));
+                if (!draftContext)
+                {
+                    throw std::runtime_error("llama_init_from_model failed for the MTP draft context.");
+                }
+                if (config.threads > 0)
+                {
+                    llama_set_n_threads(draftContext.get(), config.threads, config.threads);
+                }
+
+                common_params_speculative speculativeParams = BuildMtpSpeculativeParams(config, context.get(), draftContext.get());
+                std::unique_ptr<common_speculative, common_speculative_deleter> speculativeProbe(common_speculative_init(speculativeParams, 1));
+                if (!speculativeProbe)
+                {
+                    throw std::runtime_error("common_speculative_init failed for MTP.");
+                }
+                mtpAvailable = true;
+                mtpDiagnostics = MtpModeText(config, true);
+            }
+            catch (const std::exception& ex)
+            {
+                draftContext.reset();
+                draftModel.reset();
+                if (!config.mtpDraftModelPath.empty())
+                {
+                    throw;
+                }
+                mtpAvailable = false;
+                mtpDiagnostics = std::string("MTP requested but unavailable for this target GGUF; falling back to normal generation. Reason: ") + ex.what();
+            }
         }
 
         std::string samplerDiagnostics;
         bool usedGrammar = false;
-        llama_sampler* samplerProbe = CreateSamplerChain(model, config, samplerDiagnostics, usedGrammar);
+        llama_sampler* samplerProbe = CreateSamplerChain(model.get(), config, samplerDiagnostics, usedGrammar);
         if (!samplerProbe)
         {
-            llama_free(context);
-            llama_model_free(model);
             throw std::runtime_error("llama sampler initialization failed.");
         }
         llama_sampler_free(samplerProbe);
@@ -276,16 +498,24 @@ void LocalLlmService::LoadWorker(LocalLlmConfig config)
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             ReleaseModel();
-            m_model = model;
-            m_context = context;
+            m_model = model.release();
+            m_context = context.release();
+            m_draftModel = draftModel.release();
+            m_draftContext = draftContext.release();
             m_config = config;
             m_structuredGrammarActive = usedGrammar;
+            m_mtpAvailable = mtpAvailable;
+            m_mtpMode = mtpDiagnostics;
             m_samplerDiagnostics = samplerDiagnostics;
             m_lastError.clear();
         }
         SetState(LocalLlmState::Ready, "Ready");
         PushEvent(LocalLlmEvent::Kind::Status, "Local model ready.");
         PushEvent(LocalLlmEvent::Kind::Status, "Inference mode: " + InferenceModeText(config, llama_supports_gpu_offload(), FirstGpuDeviceDescription()));
+        if (config.mtpEnabled)
+        {
+            PushEvent(LocalLlmEvent::Kind::Status, mtpDiagnostics);
+        }
         if (!samplerDiagnostics.empty())
         {
             PushEvent(LocalLlmEvent::Kind::Status, samplerDiagnostics);
@@ -448,16 +678,22 @@ LocalLlmService::GenerationResult LocalLlmService::Generate(const std::vector<Lo
 {
     llama_model* model = nullptr;
     llama_context* context = nullptr;
+    llama_context* draftContext = nullptr;
     LocalLlmConfig config;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         model = m_model;
         context = m_context;
+        draftContext = m_draftContext;
         config = m_config;
     }
     if (!model || !context)
     {
         throw std::runtime_error("Model is not loaded.");
+    }
+    if (config.mtpEnabled && draftContext)
+    {
+        return GenerateWithMtp(messages);
     }
 
     const auto generationStart = std::chrono::steady_clock::now();
@@ -545,6 +781,226 @@ LocalLlmService::GenerationResult LocalLlmService::Generate(const std::vector<Lo
     return result;
 }
 
+LocalLlmService::GenerationResult LocalLlmService::GenerateWithMtp(const std::vector<LocalLlmMessage>& messages)
+{
+    llama_model* model = nullptr;
+    llama_context* context = nullptr;
+    llama_context* draftContext = nullptr;
+    LocalLlmConfig config;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        model = m_model;
+        context = m_context;
+        draftContext = m_draftContext;
+        config = m_config;
+    }
+    if (!model || !context || !draftContext)
+    {
+        throw std::runtime_error("MTP context is not loaded.");
+    }
+
+    const auto generationStart = std::chrono::steady_clock::now();
+    GenerationResult result;
+    result.usedMtp = true;
+
+    std::string samplerDiagnostics;
+    bool grammarActive = false;
+    std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)> sampler(
+        CreateSamplerChain(model, config, samplerDiagnostics, grammarActive),
+        &llama_sampler_free);
+    if (!sampler)
+    {
+        throw std::runtime_error("llama sampler initialization failed.");
+    }
+
+    common_params_speculative speculativeParams = BuildMtpSpeculativeParams(config, context, draftContext);
+    std::unique_ptr<common_speculative, common_speculative_deleter> speculative(common_speculative_init(speculativeParams, 1));
+    if (!speculative)
+    {
+        throw std::runtime_error("common_speculative_init failed.");
+    }
+
+    llama_memory_clear(llama_get_memory(context), true);
+    llama_memory_clear(llama_get_memory(draftContext), true);
+
+    const std::string prompt = ApplyChatTemplate(messages);
+    std::vector<int> promptTokens = Tokenize(prompt, true, true);
+    result.promptTokens = static_cast<int>(promptTokens.size());
+    result.usedGrammar = grammarActive;
+    result.diagnostics = samplerDiagnostics;
+    AppendDiagnostics(result.diagnostics, MtpModeText(config, true));
+    if (promptTokens.empty())
+    {
+        throw std::runtime_error("Prompt tokenization produced no tokens.");
+    }
+
+    const int maxTokens = std::max(1, config.maxTokens);
+    const std::size_t contextTokens = static_cast<std::size_t>(llama_n_ctx(context));
+    const std::size_t requiredTokens = promptTokens.size() + static_cast<std::size_t>(maxTokens);
+    if (requiredTokens >= contextTokens)
+    {
+        std::ostringstream message;
+        message << "Prompt does not fit in the configured context. Prompt tokens: "
+                << promptTokens.size() << ", max reply tokens: " << maxTokens
+                << ", context tokens: " << contextTokens << ".";
+        throw std::runtime_error(message.str());
+    }
+
+    const int32_t promptBatchTokens = std::max<int32_t>(1, static_cast<int32_t>(llama_n_batch(context)));
+    std::string decodeDiagnostics;
+    if (!DecodeTokensInChunks(context, promptTokens, 0, promptBatchTokens, decodeDiagnostics, speculative.get()))
+    {
+        throw std::runtime_error(decodeDiagnostics);
+    }
+    if (promptTokens.size() > static_cast<std::size_t>(promptBatchTokens))
+    {
+        std::ostringstream chunkInfo;
+        chunkInfo << "Prompt decoded in " << ((promptTokens.size() + static_cast<std::size_t>(promptBatchTokens) - 1) / static_cast<std::size_t>(promptBatchTokens))
+                  << " chunks (batch limit " << promptBatchTokens << ").";
+        AppendDiagnostics(result.diagnostics, chunkInfo.str());
+    }
+
+    llama_tokens acceptedContextTokens(promptTokens.begin(), promptTokens.end());
+    common_speculative_begin(speculative.get(), 0, acceptedContextTokens);
+
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+    int sampled = llama_sampler_sample(sampler.get(), context, -1);
+    if (llama_vocab_is_eog(vocab, sampled))
+    {
+        result.finishReason = "eog";
+        result.elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - generationStart).count();
+        return result;
+    }
+
+    result.text += TokenToPiece(sampled);
+    ++result.outputTokens;
+
+    llama_pos position = static_cast<llama_pos>(promptTokens.size());
+    result.finishReason = "max_tokens";
+
+    while (result.outputTokens < maxTokens && !m_stopRequested)
+    {
+        const int remainingTokens = maxTokens - result.outputTokens;
+        const int draftLimit = std::min(ClampMtpDraftTokens(config.mtpDraftTokens), std::max(0, remainingTokens - 1));
+        std::vector<int> draft;
+        if (draftLimit > 0)
+        {
+            common_speculative_draft_params& draftParams = common_speculative_get_draft_params(speculative.get(), 0);
+            draftParams.drafting = true;
+            draftParams.n_max = draftLimit;
+            draftParams.n_past = position;
+            draftParams.id_last = sampled;
+            draftParams.prompt = &acceptedContextTokens;
+            draftParams.result = &draft;
+            common_speculative_draft(speculative.get());
+            if (static_cast<int>(draft.size()) > draftLimit)
+            {
+                draft.resize(static_cast<std::size_t>(draftLimit));
+            }
+            result.draftTokens += static_cast<int>(draft.size());
+        }
+
+        const int32_t batchTokens = static_cast<int32_t>(1 + draft.size());
+        llama_batch batch = llama_batch_init(batchTokens, 0, 1);
+        batch.n_tokens = batchTokens;
+        batch.token[0] = sampled;
+        batch.pos[0] = position;
+        batch.n_seq_id[0] = 1;
+        batch.seq_id[0][0] = 0;
+        batch.logits[0] = true;
+        for (int32_t i = 1; i < batchTokens; ++i)
+        {
+            batch.token[i] = draft[static_cast<std::size_t>(i - 1)];
+            batch.pos[i] = position + i;
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = true;
+        }
+
+        const int decodeResult = llama_decode(context, batch);
+        if (decodeResult != 0)
+        {
+            llama_batch_free(batch);
+            result.finishReason = "decode_failed";
+            break;
+        }
+        if (!common_speculative_process(speculative.get(), batch))
+        {
+            llama_batch_free(batch);
+            result.finishReason = "mtp_process_failed";
+            AppendDiagnostics(result.diagnostics, "common_speculative_process failed during MTP verification.");
+            break;
+        }
+
+        const DraftVerification verification = SampleAndAcceptDraft(sampler.get(), context, vocab, draft);
+        llama_batch_free(batch);
+
+        if (!draft.empty())
+        {
+            common_speculative_accept(speculative.get(), 0, static_cast<uint16_t>(verification.acceptedDraftTokens));
+            result.acceptedDraftTokens += verification.acceptedDraftTokens;
+        }
+
+        acceptedContextTokens.push_back(sampled);
+        for (int i = 0; i < verification.acceptedDraftTokens && i < static_cast<int>(draft.size()); ++i)
+        {
+            acceptedContextTokens.push_back(draft[static_cast<std::size_t>(i)]);
+        }
+
+        position += 1 + verification.acceptedDraftTokens;
+        std::string trimDiagnostics;
+        if (!TrimSequenceAfter(context, position, trimDiagnostics, "target"))
+        {
+            AppendDiagnostics(result.diagnostics, trimDiagnostics);
+            result.finishReason = "mtp_trim_failed";
+            break;
+        }
+        if (!TrimSequenceAfter(draftContext, position, trimDiagnostics, "draft"))
+        {
+            AppendDiagnostics(result.diagnostics, trimDiagnostics);
+            result.finishReason = "mtp_trim_failed";
+            break;
+        }
+
+        for (int token : verification.emittedTokens)
+        {
+            result.text += TokenToPiece(token);
+            ++result.outputTokens;
+            if (result.outputTokens >= maxTokens)
+            {
+                break;
+            }
+        }
+
+        if (verification.hitEog)
+        {
+            result.finishReason = "eog";
+            break;
+        }
+        if (verification.emittedTokens.empty())
+        {
+            result.finishReason = "eog";
+            break;
+        }
+        sampled = verification.emittedTokens.back();
+    }
+
+    if (m_stopRequested)
+    {
+        result.finishReason = "stopped";
+    }
+    if (result.draftTokens > 0)
+    {
+        std::ostringstream stats;
+        stats << "MTP draft acceptance: " << result.acceptedDraftTokens << "/" << result.draftTokens
+              << " (" << (100.0 * static_cast<double>(result.acceptedDraftTokens) / static_cast<double>(std::max(1, result.draftTokens))) << "%).";
+        AppendDiagnostics(result.diagnostics, stats.str());
+    }
+    const auto generationEnd = std::chrono::steady_clock::now();
+    result.elapsedMs = std::chrono::duration<double, std::milli>(generationEnd - generationStart).count();
+    return result;
+}
+
 std::vector<LocalLlmEvent> LocalLlmService::DrainEvents()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -566,6 +1022,9 @@ LocalLlmStatus LocalLlmService::Status() const
     status.gpuOffloadAvailable = llama_supports_gpu_offload();
     status.inferenceDevice = FirstGpuDeviceDescription();
     status.inferenceMode = InferenceModeText(m_config, status.gpuOffloadAvailable, status.inferenceDevice);
+    status.mtpRequested = m_config.mtpEnabled;
+    status.mtpAvailable = m_mtpAvailable;
+    status.mtpMode = m_mtpMode.empty() ? MtpModeText(m_config, m_mtpAvailable) : m_mtpMode;
     return status;
 }
 
@@ -586,6 +1045,9 @@ void LocalLlmService::PushResponseEvent(const GenerationResult& result)
     event.elapsedMs = result.elapsedMs;
     event.finishReason = result.finishReason;
     event.usedGrammar = result.usedGrammar;
+    event.usedMtp = result.usedMtp;
+    event.draftTokens = result.draftTokens;
+    event.acceptedDraftTokens = result.acceptedDraftTokens;
     event.diagnostics = result.diagnostics;
     std::lock_guard<std::mutex> lock(m_mutex);
     m_events.push_back(std::move(event));

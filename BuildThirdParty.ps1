@@ -170,9 +170,13 @@ Invoke-WithMutex -Name "Local\ChatLookDev-LlamaCpp-$Configuration-$LlamaCuda-$Ll
     $cachePath = Join-Path $LlamaCppBuildRoot 'CMakeCache.txt'
     $llamaLib = Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'src') $Configuration) 'llama.lib'
     $ggmlLib = Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'ggml\src') $Configuration) 'ggml.lib'
+    $llamaCommonLib = Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'common') $Configuration) 'llama-common.lib'
+    $llamaCommonBaseLib = Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'common') $Configuration) 'llama-common-base.lib'
+    $cppHttplibLib = Join-Path (Join-Path (Join-Path (Join-Path $LlamaCppBuildRoot 'vendor') 'cpp-httplib') $Configuration) 'cpp-httplib.lib'
     $currentCuda = Get-CMakeBool -CachePath $cachePath -Name 'GGML_CUDA'
     $currentVulkan = Get-CMakeBool -CachePath $cachePath -Name 'GGML_VULKAN'
-    $configureLlama = !(Test-Path $cachePath) -or ($currentCuda -ne $llamaCudaCmake) -or ($currentVulkan -ne $llamaVulkanCmake)
+    $currentCommon = Get-CMakeBool -CachePath $cachePath -Name 'LLAMA_BUILD_COMMON'
+    $configureLlama = !(Test-Path $cachePath) -or ($currentCuda -ne $llamaCudaCmake) -or ($currentVulkan -ne $llamaVulkanCmake) -or ($currentCommon -ne 'ON')
 
     if ($configureLlama) {
         Write-Host "Configuring llama.cpp GGML_CUDA=$llamaCudaCmake GGML_VULKAN=$llamaVulkanCmake (LlamaCuda=$LlamaCuda, CUDA toolkit detected=$cudaToolkitAvailable, LlamaVulkan=$LlamaVulkan, Vulkan SDK detected=$vulkanSdkAvailable)"
@@ -181,12 +185,13 @@ Invoke-WithMutex -Name "Local\ChatLookDev-LlamaCpp-$Configuration-$LlamaCuda-$Ll
             '-B', $LlamaCppBuildRoot
         ) + $cmakeGeneratorArgs + @(
             '-DBUILD_SHARED_LIBS=OFF',
-            '-DLLAMA_BUILD_COMMON=OFF',
+            '-DLLAMA_BUILD_COMMON=ON',
             '-DLLAMA_BUILD_TESTS=OFF',
             '-DLLAMA_BUILD_TOOLS=OFF',
             '-DLLAMA_BUILD_EXAMPLES=OFF',
             '-DLLAMA_BUILD_SERVER=OFF',
             '-DLLAMA_BUILD_APP=OFF',
+            '-DLLAMA_OPENSSL=OFF',
             "-DGGML_CUDA=$llamaCudaCmake",
             "-DGGML_VULKAN=$llamaVulkanCmake"
         )
@@ -198,6 +203,13 @@ Invoke-WithMutex -Name "Local\ChatLookDev-LlamaCpp-$Configuration-$LlamaCuda-$Ll
 
     if (!(Test-Path $llamaLib) -or !(Test-Path $ggmlLib) -or $configureLlama) {
         cmake --build $LlamaCppBuildRoot --config $Configuration --target llama --parallel
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+
+    if (!(Test-Path $llamaCommonLib) -or !(Test-Path $llamaCommonBaseLib) -or !(Test-Path $cppHttplibLib) -or $configureLlama) {
+        cmake --build $LlamaCppBuildRoot --config $Configuration --target llama-common --parallel
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }

@@ -191,11 +191,38 @@ ImFont* AddJapaneseImGuiFont(ImGuiIO& io, float sizePixels)
     return io.Fonts->AddFontDefault(&fontConfig);
 }
 
-bool LoadJapaneseImGuiFonts(ImGuiIO& io)
+bool LoadJapaneseImGuiFonts(ImGuiIO& io, const rb::UiSettings& uiSettings)
 {
-    ImFont* uiFont = AddJapaneseImGuiFont(io, 16.0f);
-    ImFont* chatFont = AddJapaneseImGuiFont(io, 20.0f);
+    ImFont* uiFont = AddJapaneseImGuiFont(io, std::clamp(uiSettings.uiFontSize, 14.0f, 28.0f));
+    ImFont* chatFont = AddJapaneseImGuiFont(io, std::clamp(uiSettings.chatFontSize, 16.0f, 32.0f));
+    io.FontDefault = uiFont;
     return uiFont != nullptr && chatFont != nullptr;
+}
+
+void ApplyReadableImGuiStyle(const rb::UiSettings& uiSettings)
+{
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    const float scale = std::clamp(uiSettings.uiScale, 0.85f, 1.5f);
+    const bool largePadding = uiSettings.largeFramePadding;
+
+    style.WindowPadding = ImVec2(10.0f * scale, 9.0f * scale);
+    style.FramePadding = largePadding ? ImVec2(8.0f * scale, 5.0f * scale) : ImVec2(6.0f * scale, 4.0f * scale);
+    style.CellPadding = ImVec2(6.0f * scale, 4.0f * scale);
+    style.ItemSpacing = largePadding ? ImVec2(9.0f * scale, 7.0f * scale) : ImVec2(8.0f * scale, 5.0f * scale);
+    style.ItemInnerSpacing = ImVec2(6.0f * scale, 5.0f * scale);
+    style.IndentSpacing = 20.0f * scale;
+    style.ScrollbarSize = 17.0f * scale;
+    style.GrabMinSize = 13.0f * scale;
+    style.TabRounding = 3.0f;
+    style.WindowRounding = 0.0f;
+    style.ChildRounding = 2.0f;
+    style.FrameRounding = 2.0f;
+
+    style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.58f, 0.62f, 0.68f, 1.0f);
+    style.Colors[ImGuiCol_Border] = ImVec4(0.25f, 0.32f, 0.42f, 0.72f);
+    style.Colors[ImGuiCol_FrameBg] = ImVec4(0.10f, 0.19f, 0.31f, 1.0f);
+    style.Colors[ImGuiCol_FrameBgHovered] = ImVec4(0.16f, 0.29f, 0.46f, 1.0f);
 }
 
 std::wstring SceneTexturePath(const rb::SceneMaterial& material, std::size_t textureSlot)
@@ -243,7 +270,7 @@ std::vector<std::uint8_t> D3D12Backend::ReadBinaryFile(const std::filesystem::pa
     return data;
 }
 
-void D3D12Backend::Initialize(HWND hwnd, UINT width, UINT height, const std::filesystem::path& rootDirectory)
+void D3D12Backend::Initialize(HWND hwnd, UINT width, UINT height, const std::filesystem::path& rootDirectory, const rb::UiSettings& uiSettings)
 {
     m_rootDirectory = rootDirectory;
     m_hwnd = hwnd;
@@ -258,7 +285,7 @@ void D3D12Backend::Initialize(HWND hwnd, UINT width, UINT height, const std::fil
     CreateDefaultMaterialResources();
     CreateIblResources();
     CreateShadowResources();
-    InitializeImGui(hwnd);
+    InitializeImGui(hwnd, uiSettings);
 }
 
 void D3D12Backend::Shutdown()
@@ -1680,7 +1707,7 @@ void D3D12Backend::Render(float deltaSeconds)
     ++m_frameNumber;
 }
 
-void D3D12Backend::InitializeImGui(HWND hwnd)
+void D3D12Backend::InitializeImGui(HWND hwnd, const rb::UiSettings& uiSettings)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -1693,8 +1720,8 @@ void D3D12Backend::InitializeImGui(HWND hwnd)
     io.IniFilename = m_imguiUserIniPath.c_str();
     std::error_code ec;
     ImGui::LoadIniSettingsFromDisk(std::filesystem::exists(m_imguiUserIniFile, ec) ? m_imguiUserIniPath.c_str() : m_imguiDefaultIniPath.c_str());
-    LoadJapaneseImGuiFonts(io);
-    ImGui::StyleColorsDark();
+    LoadJapaneseImGuiFonts(io, uiSettings);
+    ApplyReadableImGuiStyle(uiSettings);
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX12_InitInfo initInfo;
     initInfo.Device = m_device.Get();

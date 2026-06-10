@@ -55,7 +55,7 @@ public:
     D3D12Backend(const D3D12Backend&) = delete;
     D3D12Backend& operator=(const D3D12Backend&) = delete;
 
-    void Initialize(HWND hwnd, UINT width, UINT height, const std::filesystem::path& rootDirectory);
+    void Initialize(HWND hwnd, UINT width, UINT height, const std::filesystem::path& rootDirectory, const rb::UiSettings& uiSettings);
     void Shutdown();
     bool Resize(UINT width, UINT height);
     bool ResizeSceneTarget(UINT width, UINT height);
@@ -177,7 +177,7 @@ private:
     void CreateShadowResources();
     bool GenerateIblMaps(std::string& diagnostics);
     void DispatchIbl(UINT mode, ID3D12Resource* output, UINT mipLevel, UINT width, UINT height, float roughness);
-    void InitializeImGui(HWND hwnd);
+    void InitializeImGui(HWND hwnd, const rb::UiSettings& uiSettings);
     void WaitForGpu();
     bool TryWaitForGpu(DWORD timeoutMs);
     void MoveToNextFrame();
