@@ -6,7 +6,7 @@ English version: [lookdev-rendering.md](lookdev-rendering.md)
 
 ## Main View
 
-![ChatLookDev main viewport](../images/screenshot.png)
+![ChatLookDev main viewport](../images/chatlookdev-main.png)
 
 メイン viewport では、glTF/GLB の PBR model、HDR IBL、Sun lighting、docking ImGui layout、AI Chat panel を同時に扱います。Lighting panel には HDRI、Sun、shadow、view、sky color の操作を集約しています。
 
@@ -16,13 +16,21 @@ English version: [lookdev-rendering.md](lookdev-rendering.md)
 
 ## Display Modes
 
-![Normal display mode](../images/image3.png)
+![Normal display mode](../images/normal-display-mode.png)
 
 Lighting panel の Display Mode combo で、PBR shader の出力を Beauty と debug view の間で切り替えられます。Normal view は tangent-space normal map 適用後の最終 shading normal を可視化するため、tangent や normal map の問題を確認しやすくなります。
 
+![Base Color display mode](../images/base-color-display-mode.png)
+
+Base Color view は lighting を掛けずに imported albedo と material assignment を表示するため、glTF texture binding の確認に使えます。
+
+![Shadow Mask display mode](../images/shadow-mask-display-mode.png)
+
+Shadow Mask view は Sun shadow visibility を可視化します。白い領域は direct Sun lighting を受け、暗い領域は shadow map によって減衰します。
+
 ## Sun Shadows
 
-![Sponza with Sun shadow](../images/image2.png)
+![Sponza scene with Sun shadows](../images/sponza-sun-shadows.png)
 
 v1.2 では単一の orthographic Sun shadow map を追加しています。shadow map は model transform 後の scene bounds に fit し、direct Sun lighting にだけ適用します。IBL、emissive、sky rendering には shadow を掛けません。
 

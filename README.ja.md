@@ -6,13 +6,17 @@ ChatLookDev は、glTF/GLB の PBR モデルを確認するための小さな Di
 
 このリポジトリは Codex とバイブコーディングで作成しているサンプルです。完成済みのプロダクションツールではなく、ローカル AI と対話しながら LookDev 環境を育てていくための小さな参照実装として扱っています。
 
-![ChatLookDev screenshot](images/screenshot.png)
+![ChatLookDev main viewport](images/chatlookdev-main.png)
 
-v1.2 の追加表示例:
+追加スクリーンショット:
 
-![Sponza with Sun shadow](images/image2.png)
+![Sponza scene with Sun shadows](images/sponza-sun-shadows.png)
 
-![Normal display mode](images/image3.png)
+![Normal display mode](images/normal-display-mode.png)
+
+![Base Color display mode](images/base-color-display-mode.png)
+
+![Shadow Mask display mode](images/shadow-mask-display-mode.png)
 
 ## スコープ
 

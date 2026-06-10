@@ -6,7 +6,7 @@ This document summarizes the v1.2 rendering-facing LookDev features and the UI s
 
 ## Main View
 
-![ChatLookDev main viewport](../images/screenshot.png)
+![ChatLookDev main viewport](../images/chatlookdev-main.png)
 
 The main viewport combines a glTF/GLB PBR model, HDR IBL, Sun lighting, a docked ImGui layout, and the AI Chat panel. The Lighting panel exposes HDRI, Sun, shadow, view, and sky controls in one place.
 
@@ -16,13 +16,21 @@ The default ImGui UI font is 18 px and the AI Chat font is 22 px. `Project > UI 
 
 ## Display Modes
 
-![Normal display mode](../images/image3.png)
+![Normal display mode](../images/normal-display-mode.png)
 
 The display mode combo in the Lighting panel switches the PBR shader output between Beauty and debug views. The Normal view visualizes the final shading normal after tangent-space normal map application, which makes tangent and normal-map issues easier to inspect.
 
+![Base Color display mode](../images/base-color-display-mode.png)
+
+The Base Color view shows imported albedo and material assignment without lighting, which is useful when checking glTF texture bindings.
+
+![Shadow Mask display mode](../images/shadow-mask-display-mode.png)
+
+The Shadow Mask view visualizes Sun shadow visibility. White areas receive direct Sun lighting, while darker areas are attenuated by the shadow map.
+
 ## Sun Shadows
 
-![Sponza with Sun shadow](../images/image2.png)
+![Sponza scene with Sun shadows](../images/sponza-sun-shadows.png)
 
 v1.2 adds a single orthographic Sun shadow map. It is fitted to the transformed scene bounds and applied only to direct Sun lighting. IBL, emissive, and sky rendering are not shadowed.
 

@@ -6,13 +6,17 @@ ChatLookDev is a small Direct3D 12 LookDev application for glTF/GLB PBR inspecti
 
 This repository is a sample being built with Codex and vibe coding. It is meant as a compact reference for iterating on a local, AI-assisted LookDev workflow rather than a finished production tool.
 
-![ChatLookDev screenshot](images/screenshot.png)
+![ChatLookDev main viewport](images/chatlookdev-main.png)
 
-Additional v1.2 views:
+Additional screenshots:
 
-![Sponza with Sun shadow](images/image2.png)
+![Sponza scene with Sun shadows](images/sponza-sun-shadows.png)
 
-![Normal display mode](images/image3.png)
+![Normal display mode](images/normal-display-mode.png)
+
+![Base Color display mode](images/base-color-display-mode.png)
+
+![Shadow Mask display mode](images/shadow-mask-display-mode.png)
 
 ## Scope
 
